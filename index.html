@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kitchen Planner</title>
+  <meta name="description" content="Track your kitchen inventory, get meal ideas from what you have, and plan a weekly grocery list within budget.">
+  <meta name="theme-color" content="#2f6f4f">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Kitchen Planner</h1>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button role="tab" data-tab="today">Today</button>
+      <button role="tab" data-tab="inventory">Inventory</button>
+      <button role="tab" data-tab="plan">Plan &amp; shop</button>
+      <button role="tab" data-tab="recipes">Recipes</button>
+      <button role="tab" data-tab="prices">Prices</button>
+      <button role="tab" data-tab="settings">Settings</button>
+    </nav>
+  </header>
+  <main id="app" tabindex="-1"></main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript>Kitchen Planner needs JavaScript turned on.</noscript>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
