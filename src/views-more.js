@@ -119,7 +119,7 @@ function valueTable(rows, kind) {
 
 // ---------- Spending ----------
 
-export function renderSpending(state) {
+export function renderSpending(state, receipt = {}, catalog = []) {
   const summary = spendingSummary(state, { weeks: 8 });
   const thisWeek = spentInWeek(state);
   const budget = Number(state.settings.budget);
@@ -132,6 +132,7 @@ export function renderSpending(state) {
         <div class="bar ${thisWeek > budget ? 'over' : ''}"><div style="width:${pct(thisWeek, budget)}%"></div></div>
       </div>
     </section>
+    ${renderReceipt(receipt, catalog)}
     <section>
       <h2>Record a shop</h2>
       <form data-form="spend" class="row wrap">
@@ -158,6 +159,55 @@ export function renderSpending(state) {
         <li class="row space"><span>${esc(s.date)} · ${esc(s.store || 'Store')}${s.note ? ` <span class="muted small">${esc(s.note)}</span>` : ''}</span>
           <span class="row">${money(s.amount)} <button class="ghost small" data-action="spend-delete" data-id="${s.id}" aria-label="Delete">✕</button></span></li>`).join('')}</ul>`
         : '<p class="muted">Nothing recorded yet. "I bought these" on the shopping list asks what you paid, or add a shop above.</p>'}
+    </section>`;
+}
+
+// ---------- Receipt ----------
+
+function renderReceipt(receipt, catalog) {
+  const photo = `<label class="button">${receipt.review ? 'Scan another receipt' : 'Scan a receipt'}
+    <input type="file" accept="image/*" capture="environment" data-change="receipt-photo" hidden></label>`;
+  if (receipt.busy) {
+    return `<section><h2>Receipt</h2><p class="muted">${esc(receipt.busy)}</p>
+      <div class="bar"><div style="width:${Math.round((receipt.progress || 0) * 100)}%"></div></div></section>`;
+  }
+  if (!receipt.review) {
+    return `<section><h2>Receipt</h2>
+      <p class="muted">Take a photo of your receipt. The text is read on this device, then you check the matches before anything is saved.
+        Saving records what you paid, adds the items to your inventory and keeps each price as a store price.</p>
+      ${receipt.error ? `<p class="warn">${esc(receipt.error)}</p>` : ''}
+      <div class="row wrap">${photo}</div></section>`;
+  }
+  const r = receipt.review;
+  const keys = [...new Set(catalog.map((e) => e.key))].sort();
+  const itemsTotal = r.rows.reduce((s, row) => s + row.price, 0);
+  return `
+    <section>
+      <h2>Check this receipt</h2>
+      <div class="row wrap">
+        <label>Store <input data-change="receipt-meta" data-field="store" value="${esc(r.store)}" list="stores" placeholder="e.g. Food Basics"></label>
+        <label>Date <input data-change="receipt-meta" data-field="date" type="date" value="${esc(r.date)}"></label>
+        <label>Total paid <input data-change="receipt-meta" data-field="total" type="number" min="0" step="0.01" class="num" value="${r.total ?? ''}"></label>
+      </div>
+      <p class="muted small">Lines found add up to ${money(itemsTotal)}. Pick "skip" for anything that isn't food you track; skipped names are remembered too.</p>
+      <table class="table receipt">
+        <thead><tr><th>On receipt</th><th>Price</th><th>Item</th><th>Amount bought</th><th>Stock</th></tr></thead>
+        <tbody>${r.rows.map((row) => `
+          <tr class="${row.key ? '' : 'muted'}">
+            <td data-label="On receipt">${esc(row.text)}</td>
+            <td data-label="Price">${money(row.price)}</td>
+            <td data-label="Item"><select data-change="receipt-row" data-idx="${row.idx}" data-field="key">
+              <option value="">skip</option>${keys.map((k) => `<option${k === row.key ? ' selected' : ''}>${esc(k)}</option>`).join('')}</select></td>
+            <td ${row.key ? 'data-label="Amount bought"' : ''}>${row.key ? `<span class="row"><input data-change="receipt-row" data-idx="${row.idx}" data-field="qty" type="number" min="0" step="any" class="num" value="${row.qty}" ${row.qty === '' ? 'placeholder="weight?"' : ''}>
+              <select data-change="receipt-row" data-idx="${row.idx}" data-field="unit">${unitOptions(row.unit)}</select></span>` : ''}</td>
+            <td ${row.key ? 'data-label="Stock"' : ''}>${row.key ? `<input type="checkbox" data-change="receipt-row" data-idx="${row.idx}" data-field="addToInventory" ${row.addToInventory === false ? '' : 'checked'} aria-label="Add to inventory">` : ''}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+      <div class="row wrap">
+        <button data-action="receipt-save">Save receipt</button>
+        <button class="ghost" data-action="receipt-cancel">Discard</button>
+        ${photo}
+      </div>
     </section>`;
 }
 

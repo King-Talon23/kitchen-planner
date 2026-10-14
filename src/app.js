@@ -10,6 +10,7 @@ import { buildShoppingList, effectiveCatalog, autoPlan } from './shopping.js';
 import { DEFAULT_PRICES, PRICE_SOURCE } from './data/prices.js';
 import { addSpend } from './spending.js';
 import { lookupBarcode, rememberBarcode, startScanner } from './barcode.js';
+import { parseReceipt, buildReview, applyReceipt, amountFor, recognizeReceipt, prepareImage } from './receipt.js';
 import { loadSyncConfig, saveSyncConfig, syncNow, resolveConflict } from './sync.js';
 import { CM_PER_IN, LB_PER_KG } from './nutrition.js';
 import { renderNutrition, renderSpending, renderStorePrices, renderScanner, renderSync } from './views-more.js';
@@ -18,6 +19,7 @@ let state = load();
 let tab = sessionGet('tab') || 'today';
 let editingRecipeId = null;
 let scan = { open: false };
+let receipt = {};
 let scanner = null;
 let syncConfig = loadSyncConfig();
 let syncStatus = '';
@@ -417,7 +419,7 @@ function renderSettings() {
 
 const VIEWS = {
   today: renderToday, inventory: renderInventory, plan: renderPlan, recipes: renderRecipes, prices: renderPrices,
-  nutrition: () => renderNutrition(state, catalog()), spending: () => renderSpending(state), settings: renderSettings,
+  nutrition: () => renderNutrition(state, catalog()), spending: () => renderSpending(state, receipt, catalog()), settings: renderSettings,
 };
 
 function render() {
@@ -597,6 +599,15 @@ document.addEventListener('click', async (event) => {
       download(`kitchen-planner-${today()}.json`, exportState(state));
       state.lastBackup = new Date().toISOString();
       return commit('Backup downloaded.');
+    case 'receipt-cancel':
+      receipt = {};
+      return render();
+    case 'receipt-save': {
+      const { prices, added } = applyReceipt(state, receipt.review, catalog(), { addToInventory, addSpend, newId });
+      const total = Number(receipt.review.total) || 0;
+      receipt = {};
+      return commit(`Saved: ${money(total)} spent, ${added} ${added === 1 ? 'item' : 'items'} stocked, ${prices} store ${prices === 1 ? 'price' : 'prices'} updated.`);
+    }
     case 'reset':
       if (!confirm('Erase all inventory, recipes, plans and history? Export a backup first if you might want it.')) return;
       state = defaultState();
@@ -722,6 +733,22 @@ document.addEventListener('change', async (event) => {
     }
     return;
   }
+  if (change === 'receipt-photo') return readReceipt(el.files?.[0]);
+  if (change === 'receipt-meta') {
+    receipt.review[el.dataset.field] = el.dataset.field === 'total' ? (el.value === '' ? '' : Number(el.value)) : el.value;
+    return;
+  }
+  if (change === 'receipt-row') {
+    const row = receipt.review.rows.find((r) => r.idx === Number(el.dataset.idx));
+    const field = el.dataset.field;
+    if (field === 'key') {
+      row.key = el.value || null;
+      Object.assign(row, amountFor(row, catalog().find((e) => e.key === row.key)));
+    } else if (field === 'addToInventory') row.addToInventory = el.checked;
+    else if (field === 'qty') row.qty = el.value === '' ? '' : Number(el.value);
+    else row[field] = el.value;
+    return render();
+  }
   if (change === 'price') {
     if (el.dataset.custom) {
       const entry = state.customPrices.find((p) => p.key === key);
@@ -740,6 +767,27 @@ document.addEventListener('change', async (event) => {
   if (change === 'par') item.par = el.value === '' ? null : Number(el.value);
   commit();
 });
+
+// Read a receipt photo on the device, then show the matches for checking.
+async function readReceipt(file) {
+  if (!file) return;
+  receipt = { busy: 'Loading the text reader (first time only)…', progress: 0 };
+  render();
+  try {
+    const image = await prepareImage(file);
+    const text = await recognizeReceipt(image, (progress) => {
+      receipt = { busy: 'Reading the receipt…', progress };
+      render();
+    });
+    const parsed = parseReceipt(text);
+    if (!parsed.items.length) throw new Error('No priced lines found. Try a flatter, closer photo in good light.');
+    receipt = { review: buildReview(parsed, catalog(), state.receiptAliases) };
+  } catch (err) {
+    console.error(err);
+    receipt = { error: err.message?.startsWith('No priced') ? err.message : `Could not read the receipt: ${err.message || err}` };
+  }
+  render();
+}
 
 // Ask the browser not to clear our data under storage pressure.
 navigator.storage?.persist?.().catch(() => {});
