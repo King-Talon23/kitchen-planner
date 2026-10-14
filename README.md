@@ -71,6 +71,13 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
   the app estimates daily calories and protein, shows how much of that the
   week's planned meals cover, lists calories and protein per serving for each
   recipe, and ranks foods by calories and protein per dollar.
+- **Food log.** "I made this" logs one serving of the meal as eaten, and the
+  spare servings show as leftovers to tap when you eat them. You can also add
+  any recipe, a food by amount (e.g. 500 ml milk), or a packaged food from its
+  Nutrition Facts label. Each day shows calories, protein, fat and carbs
+  against your targets, with a 7-day view.
+- **Weight log.** Weigh-ins update the weight your targets use, and once they
+  span a week the app shows your trend per week against the target rate.
 - **Sync between devices** through a secret GitHub Gist (see below).
 - Works offline and can be installed to a phone's home screen.
 
@@ -130,6 +137,14 @@ A secret gist is unlisted, not encrypted, so anyone who has its link can read it
   around 1.6 g/kg ([Morton et al. 2018](https://doi.org/10.1136/bjsports-2017-097608)).
 - Food values: USDA FoodData Central, SR Legacy, per 100 g as purchased
   (`src/data/nutrients.js` lists each food's FDC id).
+- Leftovers are offered for the day they're cooked and 2 days after, since
+  Health Canada says to eat refrigerated leftovers within 2 to 3 days
+  ([Health Canada](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/food-safety-tips-leftovers.html)).
+- Weight trend: Iraki et al. suggest judging the rate of gain from average
+  weekly change across daily or several-a-week weigh-ins, so the app fits a
+  line through the last 4 weeks of weigh-ins. Gaining slower or faster than
+  0.25–0.5% a week, it suggests eating toward the top or bottom of your
+  10–20% surplus range.
 
 These are planning estimates, not medical advice.
 
@@ -202,6 +217,7 @@ src/data/nutrients.js     USDA nutrient values per food
 src/spending.js           spending log and weekly totals
 src/barcode.js            scanning and Open Food Facts lookup
 src/nutrition.js          calorie/protein targets, recipe nutrition
+src/foodlog.js            food log, leftovers, weight trend
 src/sync.js               GitHub Gist sync
 src/views-more.js         screens for the above
 vendor/barcode-detector/  barcode scanner for browsers without one
@@ -211,7 +227,6 @@ test/                     node:test tests for the logic
 
 ## Ideas for later
 
-- Track what you eat each day against the calorie and protein targets.
 - Let auto-plan favour recipes that close your calorie and protein gap.
 - A Canada's Food Guide plate check of the plan (half vegetables and fruits,
   a quarter protein foods, a quarter whole grains;

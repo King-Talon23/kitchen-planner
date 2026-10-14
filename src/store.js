@@ -20,6 +20,8 @@ export function defaultState() {
     plan: [],
     extras: [],
     history: [],
+    eaten: [],
+    weights: [],
     priceOverrides: {},
     customPrices: [],
     storePrices: [],
@@ -38,7 +40,7 @@ export function normalizeState(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('Not a kitchen planner save file');
   const base = defaultState();
   const state = { ...base, ...raw, settings: { ...base.settings, ...(raw.settings || {}) } };
-  for (const key of ['inventory', 'recipes', 'plan', 'extras', 'history', 'customPrices', 'storePrices', 'spending']) {
+  for (const key of ['inventory', 'recipes', 'plan', 'extras', 'history', 'eaten', 'weights', 'customPrices', 'storePrices', 'spending']) {
     if (!Array.isArray(state[key])) throw new Error(`Save file has an invalid "${key}" list`);
   }
   if (typeof state.priceOverrides !== 'object' || state.priceOverrides === null) state.priceOverrides = {};
