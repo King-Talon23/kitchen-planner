@@ -11,6 +11,7 @@ import { DEFAULT_PRICES } from './data/prices.js';
 import { toBase, convertBase, formatQty, normalizeName } from './units.js';
 import { recipeNeeds, consume, canonicalName, available, today, addDays } from './inventory.js';
 import { spentInWeek } from './spending.js';
+import { dailyTargets, servingNutritionMap } from './nutrition.js';
 
 export const PRIORITY = { manual: 0, plan: 1, restock: 2 };
 
@@ -193,7 +194,7 @@ export function autoPlan(state, catalog = effectiveCatalog(state)) {
   const meals = Number(state.settings?.mealsPerWeek ?? 14);
   const target = people * meals;
   const plan = [...(state.plan || [])];
-  const candidates = state.recipes.filter((r) => !r.tags?.includes('breakfast'));
+  const candidates = state.recipes.filter((r) => !r.tags?.includes('breakfast') && !r.tags?.includes('snack'));
   const pool = candidates.length ? candidates : state.recipes;
   if (!pool.length) return { plan, reason: 'Add some recipes first.' };
 
@@ -203,7 +204,26 @@ export function autoPlan(state, catalog = effectiveCatalog(state)) {
     .filter((i) => i.priority <= PRIORITY.plan)
     .reduce((sum, i) => sum + (i.cost ?? 0), 0);
 
-  let reason = 'Planned enough servings for the week.';
+  // With nutrition targets set, a recipe's cost per serving is weighed against
+  // how much of a meal's share of the day's calories and protein it gives
+  // (a third of each, for three meals a day), so cheap but small meals don't
+  // win over filling ones.
+  const targets = dailyTargets(state.profile || {});
+  const nutrition = targets ? servingNutritionMap(pool, catalog) : null;
+  const fit = (recipe) => {
+    if (!nutrition) return 1;
+    const n = nutrition.get(recipe.id);
+    const kcal = Math.min(1, n.kcal / (targets.kcal / 3));
+    const protein = Math.min(1, n.protein / (targets.protein[0] / 3));
+    return Math.max(0.05, (kcal + protein) / 2);
+  };
+  // Lower is better. Meals made from what you already have (no added cost)
+  // come first, the most filling of them first.
+  const score = (cost, recipe) => (cost <= 0 ? -fit(recipe) : cost / fit(recipe));
+
+  let reason = targets
+    ? 'Planned enough servings for the week, favouring meals that give the most calories and protein for the money.'
+    : 'Planned enough servings for the week.';
   while (plannedServings(plan) < target) {
     const current = listFor(plan);
     const used = new Set(plan.map((p) => p.recipeId));
@@ -216,7 +236,8 @@ export function autoPlan(state, catalog = effectiveCatalog(state)) {
       // Skip a recipe if it would push anything new off the list.
       if (list.over.length > current.over.length) continue;
       const perServing = (planCost(list) - planCost(current)) / recipe.servings;
-      if (!best || perServing < best.perServing) best = { recipe, perServing };
+      const value = score(perServing, recipe);
+      if (!best || value < best.value) best = { recipe, value };
     }
     if (!best) {
       reason = 'Stopped early: another meal would push the list over budget.';

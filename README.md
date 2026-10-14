@@ -76,6 +76,13 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
   any recipe, a food by amount (e.g. 500 ml milk), or a packaged food from its
   Nutrition Facts label. Each day shows calories, protein, fat and carbs
   against your targets, with a 7-day view.
+- **Plate check.** The week's plan measured against Canada's Food Guide
+  plate (half vegetables and fruits, a quarter protein foods, a quarter whole
+  grains), with the recipes lowest in vegetables named.
+- **Nutrition-aware auto-plan.** With your details filled in, auto-plan weighs
+  each meal's cost against how much of a meal's share (a third of the day) of
+  calories and protein it gives, so filling meals win over cheap small ones.
+  Snack recipes are no longer used as meals.
 - **Weight log.** Weigh-ins update the weight your targets use, and once they
   span a week the app shows your trend per week against the target rate.
 - **Sync between devices** through a secret GitHub Gist (see below).
@@ -145,6 +152,13 @@ A secret gist is unlisted, not encrypted, so anyone who has its link can read it
   line through the last 4 weeks of weigh-ins. Gaining slower or faster than
   0.25–0.5% a week, it suggests eating toward the top or bottom of your
   10–20% surplus range.
+
+- Plate check: [Health Canada's healthy plate](https://www.canada.ca/en/health-canada/services/food-guide/eating-support/cooking/make-healthy-meals-plate.html),
+  with foods grouped by the [2019 Food Guide food classification](https://www.canada.ca/en/health-canada/services/publications/food-nutrition/2019-canada-food-guide-food-classification-system-foods-beverages-categories.html)
+  (potatoes count as vegetables; juice and milk are beverages; processed
+  meats, sauces, oils and sugar are outside the plate). It compares weights,
+  not plate space, with dry grains and legumes converted to cooked weight
+  using USDA cooked energy values, so it is a rough guide.
 
 These are planning estimates, not medical advice.
 
@@ -218,16 +232,10 @@ src/spending.js           spending log and weekly totals
 src/barcode.js            scanning and Open Food Facts lookup
 src/nutrition.js          calorie/protein targets, recipe nutrition
 src/foodlog.js            food log, leftovers, weight trend
+src/plate.js              Canada's Food Guide plate check
 src/sync.js               GitHub Gist sync
 src/views-more.js         screens for the above
 vendor/barcode-detector/  barcode scanner for browsers without one
 sw.js                     offline cache
 test/                     node:test tests for the logic
 ```
-
-## Ideas for later
-
-- Let auto-plan favour recipes that close your calorie and protein gap.
-- A Canada's Food Guide plate check of the plan (half vegetables and fruits,
-  a quarter protein foods, a quarter whole grains;
-  [Health Canada](https://www.canada.ca/en/health-canada/services/food-guide/eating-support/cooking/make-healthy-meals-plate.html)).

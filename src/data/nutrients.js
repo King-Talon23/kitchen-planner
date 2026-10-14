@@ -97,3 +97,13 @@ export const NUTRIENTS = {
   'wiener': { kcal: 290, protein: 10.3, fat: 25.8, carbs: 4.17, per: '100g', fdc: 172968 },
   'yogurt': { kcal: 63, protein: 5.25, fat: 1.55, carbs: 7.04, per: '100g', fdc: 170886 },
 };
+
+// Dry grains and legumes swell when cooked. For the plate check their weight
+// is turned into cooked weight with the ratio of dry to cooked energy per
+// 100 g (the calories don't change, the water does). Cooked values, USDA
+// FoodData Central SR Legacy: white rice, long-grain, enriched, cooked 130
+// kcal (FDC 168878); brown rice, long-grain, cooked 123 (NDB 20037); pasta,
+// cooked, enriched, without added salt 158 (FDC 169737); lentils, mature
+// seeds, cooked, boiled, without salt 116; kidney beans, all types, cooked,
+// boiled, without salt 127 (NDB 16028).
+export const COOKED_KCAL = { 'white rice': 130, 'brown rice': 123, 'pasta': 158, 'dried lentil': 116, 'dry bean': 127 };
