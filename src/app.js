@@ -15,7 +15,8 @@ import { addSpend } from './spending.js';
 import { lookupBarcode, rememberBarcode, startScanner } from './barcode.js';
 import { parseReceipt, buildReview, applyReceipt, amountFor, recognizeReceipt, prepareImage } from './receipt.js';
 import { loadSyncConfig, saveSyncConfig, syncNow, resolveConflict } from './sync.js';
-import { CM_PER_IN, LB_PER_KG } from './nutrition.js';
+import { CM_PER_IN, LB_PER_KG, recipeNutrition } from './nutrition.js';
+import { logEaten, recipeServing, foodServing, logWeight } from './foodlog.js';
 import { renderNutrition, renderSpending, renderStorePrices, renderScanner, renderSync } from './views-more.js';
 
 let state = load();
@@ -24,6 +25,7 @@ let editingRecipeId = null;
 let scan = { open: false };
 let receipt = {};
 let ideas = [];
+let logDate = today();
 let online = { query: '', results: [] };
 let scanner = null;
 let syncConfig = loadSyncConfig();
@@ -100,6 +102,12 @@ function toast(message) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
 }
 
+// "620 kcal · 38 g protein per serving", from USDA values.
+function servingLine(recipe, cat) {
+  const n = recipeNutrition(recipe, cat).perServing;
+  return n.kcal ? `${n.kcal} kcal · ${n.protein} g protein per serving` : '';
+}
+
 // ---------- Today ----------
 
 function renderToday() {
@@ -116,7 +124,7 @@ function renderToday() {
         <strong>${esc(s.recipe.name)}</strong>
         <span class="pill">${Math.round(s.coverage * 100)}% on hand</span>
       </div>
-      ${recipeTime(s.recipe) ? `<p class="muted small">⏱ ${recipeTime(s.recipe)} · serves ${s.recipe.servings}</p>` : ''}
+      ${recipeTime(s.recipe) ? `<p class="muted small">⏱ ${recipeTime(s.recipe)} · serves ${s.recipe.servings}${servingLine(s.recipe, cat) ? ` · ${servingLine(s.recipe, cat)}` : ''}</p>` : ''}
       ${s.usesExpiring.length ? `<p class="warn">Uses ${esc(s.usesExpiring.join(', '))} before ${s.usesExpiring.length > 1 ? 'they expire' : 'it expires'}</p>` : ''}
       ${s.missing.length ? `<p class="muted">Missing: ${s.missing.map((m) => `${esc(m.name)} (${formatQty(m.qty, m.unit)})`).join(', ')}</p>` : ''}
       ${recipeSteps(s.recipe)}
@@ -130,7 +138,7 @@ function renderToday() {
   const ideaCard = (idea) => `
     <li class="card">
       <div class="row space"><strong>${esc(idea.name)}</strong><span class="pill">idea</span></div>
-      <p class="muted small">⏱ ${recipeTime(idea)} · serves ${idea.servings}</p>
+      <p class="muted small">⏱ ${recipeTime(idea)} · serves ${idea.servings}${servingLine(idea, cat) ? ` · ${servingLine(idea, cat)}` : ''}</p>
       ${idea.usesExpiring.length ? `<p class="warn">Uses ${esc(idea.usesExpiring.join(', '))} before ${idea.usesExpiring.length > 1 ? 'they expire' : 'it expires'}</p>` : ''}
       <p class="muted small">${idea.ingredients.map((i) => `${esc(i.name)} ${formatQty(i.qty, i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
       ${recipeSteps(idea)}
@@ -316,6 +324,7 @@ function renderPlan() {
 // ---------- Recipes ----------
 
 function renderRecipes() {
+  const cat = catalog();
   const editing = state.recipes.find((r) => r.id === editingRecipeId);
   const ingRow = (ing = { name: '', qty: '', unit: 'g', optional: false }) => `
     <div class="row ing">
@@ -355,7 +364,7 @@ function renderRecipes() {
       <input type="search" data-filter="recipes" placeholder="Search by name, ingredient or tag (e.g. chicken, breakfast, quick)" aria-label="Search recipes">
       <ul class="cards" id="recipe-list">${state.recipes.map((r) => `
         <li class="card" data-search="${esc([r.name, ...(r.tags || []), ...r.ingredients.map((i) => i.name)].join(' ').toLowerCase())}">
-          <div class="row space"><strong>${esc(r.name)}</strong><span class="muted small">serves ${r.servings}${recipeTime(r) ? ` · ${recipeTime(r)}` : ''}</span></div>
+          <div class="row space"><strong>${esc(r.name)}</strong><span class="muted small">serves ${r.servings}${recipeTime(r) ? ` · ${recipeTime(r)}` : ''}${servingLine(r, cat) ? ` · ${servingLine(r, cat)}` : ''}</span></div>
           <p class="muted small">${r.ingredients.map((i) => `${esc(i.name)} ${i.qty} ${esc(UNITS[i.unit]?.label ?? i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
           ${recipeSteps(r, 'Steps')}
           ${r.source ? `<p class="muted small">From <a href="${esc(r.source.url)}" target="_blank" rel="noopener">${esc(r.source.name)}</a>${r.source.estimatedTime ? '; time is an estimate, edit to correct it' : ''}</p>` : ''}
@@ -514,7 +523,7 @@ function renderSettings() {
 
 const VIEWS = {
   today: renderToday, inventory: renderInventory, plan: renderPlan, recipes: renderRecipes, prices: renderPrices,
-  nutrition: () => renderNutrition(state, catalog()), spending: () => renderSpending(state, receipt, catalog()), settings: renderSettings,
+  nutrition: () => renderNutrition(state, catalog(), { date: logDate > today() ? today() : logDate }), spending: () => renderSpending(state, receipt, catalog()), settings: renderSettings,
 };
 
 function render() {
@@ -550,11 +559,16 @@ function addDaysISO(days) {
 }
 
 function cook(recipe, servings, date) {
-  const { shortfalls } = logMeal(state, recipe, { servings, date }, catalog());
+  const cat = catalog();
+  const { entry, shortfalls } = logMeal(state, recipe, { servings, date }, cat);
+  // You ate one serving; the rest show as leftovers on the Nutrition tab.
+  const { per, unknown } = recipeServing(recipe, cat);
+  entry.per = per;
+  logEaten(state, { date, name: recipe.name, servings: 1, per, unknown, recipeId: recipe.id, mealId: entry.id, kind: 'recipe' });
   const note = shortfalls.length
     ? ` You didn't have enough ${shortfalls.map((s) => s.name).join(', ')}, so check those amounts in Inventory.`
     : '';
-  commit(`Logged ${recipe.name}. Inventory updated.${note}`);
+  commit(`Logged ${recipe.name}: inventory updated, and 1 serving (${per.kcal} kcal, ${per.protein} g protein) added to what you ate.${note}`);
 }
 
 const CATEGORY_LOCATION = { frozen: 'freezer', meat: 'fridge', dairy: 'fridge', fridge: 'fridge' };
@@ -661,6 +675,18 @@ document.addEventListener('click', async (event) => {
       if (r) return cook(r, planned.servings, today());
       return commit();
     }
+    case 'eat-delete':
+      state.eaten = state.eaten.filter((e) => e.id !== id);
+      return commit();
+    case 'eat-leftover': {
+      const meal = state.history.find((m) => m.id === id);
+      if (!meal?.per) return;
+      logEaten(state, { date: logDate, name: meal.recipeName, servings: 1, per: meal.per, recipeId: meal.recipeId, mealId: meal.id, kind: 'recipe' });
+      return commit(`Logged a serving of ${meal.recipeName}.`);
+    }
+    case 'weight-delete':
+      state.weights = state.weights.filter((w) => w.id !== id);
+      return commit();
     case 'autoplan': {
       const { plan, reason } = autoPlan(state, catalog());
       state.plan = plan;
@@ -806,6 +832,30 @@ document.addEventListener('submit', (event) => {
         });
         return commit(`Saved the ${data.store.trim()} price for ${data.key.trim()}.`);
       }
+      case 'eat-recipe': {
+        const r = state.recipes.find((x) => x.id === data.recipeId);
+        if (!r) throw new Error('Pick a recipe');
+        const { per, unknown } = recipeServing(r, catalog());
+        logEaten(state, { date: data.date || today(), name: r.name, servings: data.servings, per, unknown, recipeId: r.id, kind: 'recipe' });
+        return commit(`Logged ${r.name}.`);
+      }
+      case 'eat-food': {
+        const qty = Number(data.qty);
+        if (!(qty > 0)) throw new Error('Enter an amount');
+        const per = foodServing(data.name.trim(), qty, data.unit, catalog());
+        if (!per) throw new Error(`No nutrition data for "${data.name.trim()}" in that unit. Try grams, or add it from its label.`);
+        logEaten(state, { date: data.date || today(), name: `${data.name.trim()} ${formatQty(qty, data.unit)}`, servings: 1, per, kind: 'food' });
+        return commit(`Logged ${data.name.trim()}.`);
+      }
+      case 'eat-label': {
+        const per = { kcal: Number(data.kcal), protein: Number(data.protein || 0), fat: Number(data.fat || 0), carbs: Number(data.carbs || 0) };
+        logEaten(state, { date: data.date || today(), name: data.name.trim(), servings: 1, per, kind: 'label' });
+        return commit(`Logged ${data.name.trim()}.`);
+      }
+      case 'weight': {
+        const w = logWeight(state, { date: data.date || today(), kg: Number(data.lb) / LB_PER_KG });
+        return commit(`Saved ${data.lb} lb for ${w.date}.`);
+      }
       case 'profile': {
         const inches = Number(data.ft || 0) * 12 + Number(data.in || 0);
         Object.assign(state.profile, {
@@ -898,6 +948,15 @@ document.addEventListener('change', async (event) => {
     else if (field === 'qty') row.qty = el.value === '' ? '' : Number(el.value);
     else row[field] = el.value;
     return render();
+  }
+  if (change === 'log-date') {
+    logDate = el.value || today();
+    return render();
+  }
+  if (change === 'eaten-servings') {
+    const entry = state.eaten.find((e) => e.id === id);
+    if (entry && Number(el.value) > 0) entry.servings = Number(el.value);
+    return commit();
   }
   if (change === 'plan-date' || change === 'plan-meal') {
     const planned = state.plan.find((p) => p.id === id);

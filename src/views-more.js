@@ -6,15 +6,16 @@ import { ACTIVITY, GOALS, LB_PER_KG, CM_PER_IN, dailyTargets, planNutrition, rec
 import { spendingSummary, spentInWeek, weekStart } from './spending.js';
 import { activeStorePrices, STORE_PRICE_DAYS } from './shopping.js';
 import { today } from './inventory.js';
+import { eatenOn, recentDays, leftovers, weightTrend, trendAdvice, LEFTOVER_DAYS } from './foodlog.js';
 import { DEFAULT_PRICES } from './data/prices.js';
-import { NUTRIENT_SOURCE } from './data/nutrients.js';
+import { NUTRIENT_SOURCE, NUTRIENTS } from './data/nutrients.js';
 
 const pct = (part, whole) => (whole ? Math.min(100, Math.round((part / whole) * 100)) : 0);
 const lb = (kg) => (kg === '' || kg == null ? '' : Math.round(Number(kg) * LB_PER_KG * 10) / 10);
 
 // ---------- Nutrition ----------
 
-export function renderNutrition(state, cat) {
+export function renderNutrition(state, cat, { date = today() } = {}) {
   const p = state.profile;
   const heightIn = p.heightCm ? Number(p.heightCm) / CM_PER_IN : '';
   const ft = heightIn === '' ? '' : Math.floor(Math.round(heightIn) / 12);
@@ -61,7 +62,7 @@ export function renderNutrition(state, cat) {
         <li class="card"><span class="muted small">Fat</span><strong>${t.fat[0]}–${t.fat[1]} g</strong><span class="muted small">0.5–1.5 g per kg</span></li>
         <li class="card"><span class="muted small">Carbohydrate</span><strong>≈ ${t.carbs} g</strong><span class="muted small">the rest of your calories</span></li>
       </ul>
-      ${t.weeksToGoal ? `<p>Aim to gain about ${lb(t.weeklyGainKg[0])}–${lb(t.weeklyGainKg[1])} lb a week, which reaches your goal in roughly ${t.weeksToGoal[0]}–${t.weeksToGoal[1]} weeks. Weigh yourself regularly and add or remove about 100–200 kcal a day if you're gaining slower or faster than that.</p>` : ''}
+      ${t.weeksToGoal ? `<p>Aim to gain about ${lb(t.weeklyGainKg[0])}–${lb(t.weeklyGainKg[1])} lb a week, which reaches your goal in roughly ${t.weeksToGoal[0]}–${t.weeksToGoal[1]} weeks. Log your weight below; if you gain slower or faster than that, move toward the top or bottom of your calorie range.</p>` : ''}
       <p class="muted small">These are estimates for planning, not medical advice. The equation is typically within about 10% of a measured value.
         Sources: <a href="https://doi.org/10.1016/j.jada.2005.02.005" target="_blank" rel="noopener">Frankenfield 2005</a> (energy equation),
         <a href="https://www.fao.org/3/y5686e/y5686e07.htm" target="_blank" rel="noopener">FAO/WHO/UNU</a> (activity levels),
@@ -82,6 +83,9 @@ export function renderNutrition(state, cat) {
       <h2>Fill in your details to get targets</h2>
       <p>Sex, age, height and weight are needed for the calorie estimate.</p>
     </section>`}
+
+    ${renderFoodLog(state, cat, t, date)}
+    ${renderWeight(state, t)}
 
     <section>
       <h2>Most calories per dollar</h2>
@@ -104,6 +108,107 @@ export function renderNutrition(state, cat) {
         </tbody>
       </table>
       <p class="muted small">Nutrient values: ${esc(NUTRIENT_SOURCE)}</p>
+    </section>`;
+}
+
+const fmtDay = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+function renderFoodLog(state, cat, t, date) {
+  const { entries, totals } = eatenOn(state, date);
+  const week = recentDays(state, { until: date });
+  const left = leftovers(state, date);
+  const foods = [...new Set([...Object.keys(NUTRIENTS), ...cat.map((e) => e.key).filter((k) => NUTRIENTS[k])])].sort();
+  const recipes = [...state.recipes].sort((a, b) => a.name.localeCompare(b.name));
+  const meter = (label, value, target, unit, range) => `
+    <div class="meter">
+      <div class="row space"><span>${label}</span><span>${value.toLocaleString()}${target ? ` / ${target.toLocaleString()}` : ''} ${unit}${range ? ` <span class="muted small">(${range})</span>` : ''}</span></div>
+      ${target ? `<div class="bar"><div style="width:${pct(value, target)}%"></div></div>` : ''}
+    </div>`;
+  const gap = t ? t.kcal - totals.kcal : 0;
+  const proteinGap = t ? t.protein[0] - totals.protein : 0;
+  return `
+    <section>
+      <div class="row space wrap"><h2>What you ate</h2>
+        <label class="row">Day <input type="date" value="${esc(date)}" max="${today()}" data-change="log-date"></label></div>
+      ${meter('Calories', totals.kcal, t?.kcal, 'kcal')}
+      ${meter('Protein', totals.protein, t?.protein[0], 'g', t ? `aim ${t.protein[0]}–${t.protein[1]} g` : '')}
+      ${meter('Fat', totals.fat, t?.fat[0], 'g', t ? `aim ${t.fat[0]}–${t.fat[1]} g` : '')}
+      ${meter('Carbohydrate', totals.carbs, t?.carbs, 'g')}
+      ${t && entries.length ? `<p class="muted">${gap > 0 ? `${gap.toLocaleString()} kcal to go` : 'Calorie target reached'}${proteinGap > 0 ? ` and ${proteinGap} g of protein` : gap > 0 ? '; protein target reached' : ' and protein target reached'}.</p>` : ''}
+      ${!t ? '<p class="muted small">Fill in your details above to see these against your targets.</p>' : ''}
+      ${entries.length ? `<ul class="list plain">${entries.map((e) => `
+        <li class="row space"><span>${esc(e.name)} <span class="muted small">${Math.round(e.per.kcal * e.servings)} kcal · ${Math.round(e.per.protein * e.servings)} g protein${e.unknown?.length ? ` · no data for ${esc(e.unknown.join(', '))}` : ''}</span></span>
+          <span class="row"><input class="num" type="number" min="0.25" step="0.25" value="${e.servings}" data-change="eaten-servings" data-id="${e.id}" aria-label="Servings of ${esc(e.name)}"> ${e.kind === 'food' ? '×' : 'serving'}
+            <button class="ghost small" data-action="eat-delete" data-id="${e.id}" aria-label="Remove">✕</button></span></li>`).join('')}</ul>`
+        : `<p class="muted">Nothing logged for ${date === today() ? 'today' : fmtDay(date)}. "I made this" logs one serving for you; add anything else below.</p>`}
+
+      ${left.length ? `
+      <h3>Leftovers</h3>
+      <ul class="list plain">${left.map((l) => `
+        <li class="row space"><span>${esc(l.meal.recipeName)} <span class="muted small">${l.left} ${l.left === 1 ? 'serving' : 'servings'} left · eat by ${fmtDay(l.lastDay)}</span></span>
+          <button class="small" data-action="eat-leftover" data-id="${l.meal.id}">Ate a serving</button></li>`).join('')}</ul>
+      <p class="muted small">Health Canada: eat refrigerated leftovers within 2 to 3 days and reheat them to 74°C (165°F). Leftovers show here for the day you cooked plus ${LEFTOVER_DAYS} days.
+        <a href="https://www.canada.ca/en/health-canada/services/general-food-safety-tips/food-safety-tips-leftovers.html" target="_blank" rel="noopener">Source</a></p>` : ''}
+
+      <details>
+        <summary>Add something you ate</summary>
+        <form data-form="eat-recipe" class="row wrap">
+          <label>Recipe <select name="recipeId" required><option value="">Choose</option>${recipes.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select></label>
+          <label>Servings <input name="servings" type="number" min="0.25" step="0.25" value="1" class="num" required></label>
+          <input type="hidden" name="date" value="${esc(date)}">
+          <button>Add</button>
+        </form>
+        <form data-form="eat-food" class="row wrap">
+          <label>Food <input name="name" list="nutrient-foods" required placeholder="e.g. milk"></label>
+          <label>Amount <input name="qty" type="number" min="0" step="any" class="num" required></label>
+          <label>Unit <select name="unit">${unitOptions('g')}</select></label>
+          <input type="hidden" name="date" value="${esc(date)}">
+          <button>Add</button>
+          <datalist id="nutrient-foods">${foods.map((f) => `<option value="${esc(f)}">`).join('')}</datalist>
+        </form>
+        <form data-form="eat-label" class="row wrap">
+          <label>From a label <input name="name" required placeholder="e.g. protein bar"></label>
+          <label>kcal <input name="kcal" type="number" min="0" step="any" class="num" required></label>
+          <label>Protein g <input name="protein" type="number" min="0" step="any" class="num"></label>
+          <label>Fat g <input name="fat" type="number" min="0" step="any" class="num"></label>
+          <label>Carbs g <input name="carbs" type="number" min="0" step="any" class="num"></label>
+          <input type="hidden" name="date" value="${esc(date)}">
+          <button>Add</button>
+        </form>
+        <p class="muted small">Foods use ${esc(NUTRIENT_SOURCE)} Packaged foods: copy the Nutrition Facts table for one serving.</p>
+      </details>
+
+      ${week.daysLogged ? `
+      <h3>Last 7 days</h3>
+      <ul class="weeks">${week.rows.map((r) => `
+        <li><span class="muted small">${fmtDay(r.date).split(',')[0]}</span>
+          <span class="bar ${t && r.logged && r.kcal < t.kcalRange[0] ? 'over' : ''}"><span style="width:${pct(r.kcal, Math.max(t?.kcalRange[1] || 0, ...week.rows.map((x) => x.kcal)) || 1)}%"></span>${t ? `<i style="left:${pct(t.kcal, Math.max(t.kcalRange[1], ...week.rows.map((x) => x.kcal)))}%" title="target"></i>` : ''}</span>
+          <span class="small">${r.logged ? `${r.kcal.toLocaleString()} kcal · ${r.protein} g` : '<span class="muted">not logged</span>'}</span></li>`).join('')}
+      </ul>
+      <p class="muted">Average on the ${week.daysLogged} ${week.daysLogged === 1 ? 'day' : 'days'} you logged: ${week.average.kcal.toLocaleString()} kcal and ${week.average.protein} g protein${t ? ` (target ${t.kcal.toLocaleString()} kcal, ${t.protein[0]}–${t.protein[1]} g)` : ''}.${t ? ' Red days were under the bottom of your calorie range.' : ''}</p>` : ''}
+    </section>`;
+}
+
+function renderWeight(state, t) {
+  const weights = state.weights || [];
+  const trend = weightTrend(state);
+  const advice = trendAdvice(trend, t);
+  const rate = (kg) => `${kg > 0 ? '+' : ''}${lb(kg)} lb`;
+  return `
+    <section>
+      <h2>Weight</h2>
+      <form data-form="weight" class="row wrap">
+        <label>Date <input name="date" type="date" value="${today()}" max="${today()}" required></label>
+        <label>Weight (lb) <input name="lb" type="number" min="50" max="600" step="0.1" class="num" required></label>
+        <button>Save</button>
+      </form>
+      ${trend ? `<p>Trend over the last ${trend.days} days: <strong>${rate(trend.kgPerWeek)} a week</strong>${t?.weeklyGainKg ? ` (aim ${lb(t.weeklyGainKg[0])}–${lb(t.weeklyGainKg[1])} lb).` : '.'}
+        ${advice === 'slow' ? `Slower than the aim: eat toward the top of your range (${t.kcalRange[1].toLocaleString()} kcal).` : advice === 'fast' ? `Faster than the aim: eat toward the bottom of your range (${t.kcalRange[0].toLocaleString()} kcal) to limit fat gain.` : advice ? 'On track.' : ''}</p>`
+        : `<p class="muted">Weigh yourself daily or a few times a week; once they span a week, a trend line through them evens out day-to-day swings. Each weigh-in also updates the weight your targets use.</p>`}
+      ${weights.length ? `<ul class="list plain">${weights.slice(-8).reverse().map((w) => `
+        <li class="row space"><span>${fmtDay(w.date)}</span><span class="row">${lb(w.kg)} lb
+          <button class="ghost small" data-action="weight-delete" data-id="${w.id}" aria-label="Delete">✕</button></span></li>`).join('')}</ul>` : ''}
+      <p class="muted small">Target rate 0.25–0.5% of body weight a week, adjusted from the trend of frequent weigh-ins (<a href="https://doi.org/10.3390/sports7070154" target="_blank" rel="noopener">Iraki 2019</a>).</p>
     </section>`;
 }
 
