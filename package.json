@@ -1,0 +1,12 @@
+{
+  "name": "kitchen-planner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal kitchen inventory, meal suggestions and weekly grocery budget planner.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "start": "node scripts/serve.js"
+  },
+  "engines": { "node": ">=20" }
+}
