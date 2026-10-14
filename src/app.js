@@ -6,6 +6,8 @@ import { UNITS, formatQty } from './units.js';
 import { money, esc, unitOptions, recipeTime, recipeSteps } from './ui.js';
 import { addToInventory, logMeal, lowStock, expiringSoon, newId, today, canonicalName } from './inventory.js';
 import { suggestMeals } from './suggest.js';
+import { mealIdeas } from './ideas.js';
+import { searchByIngredient, fetchRecipe, MEALDB_CREDIT } from './online.js';
 import { buildShoppingList, effectiveCatalog, autoPlan } from './shopping.js';
 import { DEFAULT_PRICES, PRICE_SOURCE } from './data/prices.js';
 import { addSpend } from './spending.js';
@@ -20,6 +22,8 @@ let tab = sessionGet('tab') || 'today';
 let editingRecipeId = null;
 let scan = { open: false };
 let receipt = {};
+let ideas = [];
+let online = { query: '', results: [] };
 let scanner = null;
 let syncConfig = loadSyncConfig();
 let syncStatus = '';
@@ -121,6 +125,20 @@ function renderToday() {
       </div>
     </li>`;
 
+  ideas = mealIdeas(state, cat, { servings: Math.max(2, Number(state.settings.people) || 1) });
+  const ideaCard = (idea) => `
+    <li class="card">
+      <div class="row space"><strong>${esc(idea.name)}</strong><span class="pill">idea</span></div>
+      <p class="muted small">⏱ ${recipeTime(idea)} · serves ${idea.servings}</p>
+      ${idea.usesExpiring.length ? `<p class="warn">Uses ${esc(idea.usesExpiring.join(', '))} before ${idea.usesExpiring.length > 1 ? 'they expire' : 'it expires'}</p>` : ''}
+      <p class="muted small">${idea.ingredients.map((i) => `${esc(i.name)} ${formatQty(i.qty, i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
+      ${recipeSteps(idea)}
+      <div class="row">
+        <button data-action="idea-cook" data-id="${esc(idea.id)}">I made this</button>
+        <button class="ghost" data-action="idea-save" data-id="${esc(idea.id)}">Save to my recipes</button>
+      </div>
+    </li>`;
+
   return `
     ${state.inventory.length === 0 ? `
       <section class="callout">
@@ -138,6 +156,12 @@ function renderToday() {
       ${ready.length ? `<ul class="cards">${ready.map(card).join('')}</ul>` : '<p class="muted">Nothing fully covered yet. See the close matches below.</p>'}
     </section>
     ${close.length ? `<section><h2>Almost there</h2><ul class="cards">${close.map(card).join('')}</ul></section>` : ''}
+    ${ideas.length ? `
+      <section>
+        <h2>Ideas from what you have</h2>
+        <p class="muted small">Put together from your inventory, so they change as you add food. Everything listed is on hand.</p>
+        <ul class="cards">${ideas.map(ideaCard).join('')}</ul>
+      </section>` : ''}
     <section>
       <h2>Log something else you ate</h2>
       <form data-form="log" class="row wrap">
@@ -280,6 +304,7 @@ function renderRecipes() {
       <label class="small"><input type="checkbox" name="ing-optional" ${ing.optional ? 'checked' : ''}> optional</label>
     </div>`;
   return `
+    ${renderOnline()}
     <section>
       <h2>${editing ? `Edit ${esc(editing.name)}` : 'New recipe'}</h2>
       <form data-form="recipe" class="stack">
@@ -311,12 +336,51 @@ function renderRecipes() {
           <div class="row space"><strong>${esc(r.name)}</strong><span class="muted small">serves ${r.servings}${recipeTime(r) ? ` · ${recipeTime(r)}` : ''}</span></div>
           <p class="muted small">${r.ingredients.map((i) => `${esc(i.name)} ${i.qty} ${esc(UNITS[i.unit]?.label ?? i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
           ${recipeSteps(r, 'Steps')}
+          ${r.source ? `<p class="muted small">From <a href="${esc(r.source.url)}" target="_blank" rel="noopener">${esc(r.source.name)}</a>${r.source.estimatedTime ? '; time estimated from the steps' : ''}</p>` : ''}
           <div class="row">
             <button class="ghost small" data-action="recipe-edit" data-id="${r.id}">Edit</button>
             <button class="ghost small" data-action="recipe-delete" data-id="${r.id}">Delete</button>
           </div>
         </li>`).join('')}
       </ul>
+    </section>`;
+}
+
+function renderOnline() {
+  const cat = catalog();
+  const onHand = [...new Set(state.inventory.filter((i) => i.qty > 0).map((i) => i.name.trim().toLowerCase()))];
+  const unused = onHand.filter((n) => !state.recipes.some((r) => r.ingredients.some((i) => canonicalName(i.name, cat) === canonicalName(n, cat))));
+  const p = online.preview;
+  return `
+    <section>
+      <h2>Find recipes online</h2>
+      <p class="muted small">Search <a href="${MEALDB_CREDIT.url}" target="_blank" rel="noopener">TheMealDB</a>, a free recipe database, by ingredient. Saved recipes work offline and show up in suggestions.</p>
+      <form data-form="online-search" class="row wrap">
+        <input name="q" list="onhand-names" value="${esc(online.query)}" placeholder="Ingredient, e.g. zucchini" required>
+        <button>Search</button>
+      </form>
+      <datalist id="onhand-names">${onHand.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+      ${unused.length ? `<p class="small muted">In your kitchen but in none of your recipes:</p>
+        <div class="chips">${unused.slice(0, 12).map((n) => `<button class="chip" data-action="online-find" data-q="${esc(n)}">${esc(n)}</button>`).join('')}</div>` : ''}
+      ${online.busy ? `<p class="muted">${esc(online.busy)}</p>` : ''}
+      ${online.error ? `<p class="warn">${esc(online.error)}</p>` : ''}
+      ${p ? `
+        <div class="callout">
+          <div class="row space"><strong>${esc(p.name)}</strong><button class="ghost small" data-action="online-close">Close</button></div>
+          <p class="muted small">${p.cookMin ? `⏱ about ${recipeTime(p)}, estimated from the steps` : 'No cooking time given; add one after saving'} · serves about ${p.servings} (not stated, so edit after saving)</p>
+          <p class="small">${p.ingredients.map((i) => `${esc(i.name)} ${i.qty} ${esc(UNITS[i.unit]?.label ?? i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
+          ${recipeSteps(p, 'Steps')}
+          <div class="row wrap">
+            <button data-action="online-save">Save to my recipes</button>
+            <a class="small" href="${esc(p.source.url)}" target="_blank" rel="noopener">View on TheMealDB</a>
+          </div>
+        </div>` : ''}
+      ${online.results.length ? `
+        <ul class="results">${online.results.slice(0, 12).map((r) => `
+          <li><button class="result" data-action="online-view" data-id="${esc(r.id)}">
+            <img src="${esc(r.thumb)}/small" alt="" loading="lazy" width="56" height="56"><span>${esc(r.name)}</span></button></li>`).join('')}
+        </ul>
+        <p class="muted small">${online.results.length} ${online.results.length === 1 ? 'recipe' : 'recipes'}. Recipe data and images: <a href="${MEALDB_CREDIT.url}" target="_blank" rel="noopener">TheMealDB</a>.</p>` : ''}
     </section>`;
 }
 
@@ -529,6 +593,33 @@ document.addEventListener('click', async (event) => {
 
   switch (action) {
     case 'sample': return loadSample();
+    case 'idea-cook': {
+      const idea = ideas.find((i) => i.id === id);
+      return idea && cook(idea, idea.servings, today());
+    }
+    case 'idea-save': {
+      const idea = ideas.find((i) => i.id === id);
+      if (!idea) return;
+      const { usesExpiring, ...recipe } = idea;
+      state.recipes.push({ ...structuredClone(recipe), id: newId('r') });
+      return commit(`Saved ${idea.name} to your recipes.`);
+    }
+    case 'online-find':
+      tab = 'recipes';
+      sessionSet('tab', tab);
+      return searchOnline(el.dataset.q);
+    case 'online-view': return viewOnline(id);
+    case 'online-close':
+      online.preview = null;
+      return render();
+    case 'online-save': {
+      const recipe = online.preview;
+      if (!recipe) return;
+      if (state.recipes.some((r) => r.source?.id && r.source.id === recipe.source.id)) return toast(`${recipe.name} is already in your recipes.`);
+      state.recipes.push(structuredClone(recipe));
+      online.preview = null;
+      return commit(`Saved ${recipe.name}. Edit it to fix servings, times or amounts.`);
+    }
     case 'cook': return cook(recipe, recipe.servings, today());
     case 'plan-add':
       state.plan.push({ id: newId('plan'), recipeId: id, servings: recipe.servings });
@@ -631,11 +722,16 @@ document.addEventListener('submit', (event) => {
   const data = Object.fromEntries(new FormData(form));
   try {
     switch (form.dataset.form) {
-      case 'inventory':
-        addToInventory(state, data, catalog());
-        commit(`Added ${data.name}.`);
+      case 'inventory': {
+        const cat = catalog();
+        addToInventory(state, data, cat);
+        const key = canonicalName(data.name, cat);
+        const used = state.recipes.some((r) => r.ingredients.some((i) => canonicalName(i.name, cat) === key));
+        commit(used ? `Added ${data.name}.` : `Added ${data.name}. None of your recipes use it yet: Today shows ideas with it, and Recipes can search online.`);
         document.querySelector('[data-form="inventory"] [name="name"]')?.focus();
         return;
+      }
+      case 'online-search': return searchOnline(data.q);
       case 'log': {
         const recipe = state.recipes.find((r) => r.id === data.recipeId);
         return cook(recipe, Number(data.servings), data.date);
@@ -715,7 +811,9 @@ function saveRecipe(form, data) {
     name: n.value.trim(), qty: Number(qtys[idx].value), unit: units[idx].value, optional: opts[idx].checked,
   })).filter((i) => i.name && i.qty > 0);
   if (!ingredients.length) throw new Error('Add at least one ingredient with an amount');
+  const previous = state.recipes.find((r) => r.id === editingRecipeId);
   const recipe = {
+    ...(previous?.source ? { source: { ...previous.source, estimatedTime: false, estimatedServings: false } } : {}),
     id: editingRecipeId ?? newId('r'), name: data.name.trim(), servings: Number(data.servings),
     tags: String(data.tags || '').split(',').map((t) => t.trim()).filter(Boolean), ingredients,
     prepMin: data.prepMin === '' ? null : Number(data.prepMin), cookMin: data.cookMin === '' ? null : Number(data.cookMin),
@@ -777,6 +875,34 @@ document.addEventListener('change', async (event) => {
   if (change === 'par') item.par = el.value === '' ? null : Number(el.value);
   commit();
 });
+
+// Recipes from TheMealDB for an ingredient.
+async function searchOnline(query) {
+  const q = String(query || '').trim();
+  if (!q) return;
+  online = { query: q, busy: `Searching for recipes with ${q}…`, results: [] };
+  render();
+  try {
+    const results = await searchByIngredient(q);
+    online = { query: q, results, error: results.length ? '' : `TheMealDB has no recipes listed under "${q}". Try a simpler name, like "chicken" or "zucchini".` };
+  } catch (err) {
+    online = { query: q, results: [], error: navigator.onLine === false ? 'You are offline. Online recipe search needs a connection.' : `Search failed: ${err.message}` };
+  }
+  render();
+}
+
+async function viewOnline(id) {
+  online.busy = 'Loading the recipe…';
+  render();
+  try {
+    online.preview = await fetchRecipe(id);
+    online.error = '';
+  } catch (err) {
+    online.error = `Could not load the recipe: ${err.message}`;
+  }
+  online.busy = '';
+  render();
+}
 
 // Read a receipt photo on the device, then show the matches for checking.
 async function readReceipt(file) {

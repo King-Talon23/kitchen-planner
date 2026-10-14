@@ -6,11 +6,17 @@ import { DEFAULT_RECIPES } from './data/recipes.js';
 export const STORAGE_KEY = 'kitchen-planner/v1';
 export const SCHEMA_VERSION = 1;
 
+// The starter recipes the first version shipped with. Saves from before
+// starterIds existed have already seen these, so a deleted one stays deleted.
+const FIRST_STARTERS = ['r-bolognese', 'r-chicken-stirfry', 'r-sheetpan-thighs', 'r-chili', 'r-lentil-soup', 'r-salmon-rice', 'r-tofu-stirfry',
+  'r-pork-sweetpotato', 'r-quesadillas', 'r-tuna-pasta', 'r-omelette', 'r-pancakes', 'r-grilled-cheese', 'r-fried-rice'];
+
 export function defaultState() {
   return {
     version: SCHEMA_VERSION,
     inventory: [],
     recipes: structuredClone(DEFAULT_RECIPES),
+    starterIds: DEFAULT_RECIPES.map((r) => r.id),
     plan: [],
     extras: [],
     history: [],
@@ -39,6 +45,13 @@ export function normalizeState(raw) {
   if (typeof state.barcodes !== 'object' || state.barcodes === null) state.barcodes = {};
   if (typeof state.receiptAliases !== 'object' || state.receiptAliases === null) state.receiptAliases = {};
   state.profile = { ...base.profile, ...(raw.profile || {}) };
+  // New starter recipes reach older saves once; ones you deleted stay gone.
+  if (!Array.isArray(raw.starterIds)) state.starterIds = Array.isArray(raw.recipes) ? [...FIRST_STARTERS] : base.starterIds;
+  for (const starter of DEFAULT_RECIPES) {
+    if (state.starterIds.includes(starter.id)) continue;
+    if (!state.recipes.some((r) => r.id === starter.id)) state.recipes.push(structuredClone(starter));
+    state.starterIds.push(starter.id);
+  }
   // Saves made before recipes had steps: fill in the starter recipes' steps and times.
   for (const recipe of state.recipes) {
     const starter = DEFAULT_RECIPES.find((r) => r.id === recipe.id);

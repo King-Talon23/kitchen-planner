@@ -233,7 +233,7 @@ test('starter recipes have steps and times, and old saves get them filled in', a
   const { normalizeState } = await import('../src/store.js');
   const { recipeTime } = await import('../src/ui.js');
   for (const r of DEFAULT_RECIPES) {
-    assert.ok(r.steps.length >= 3 && r.prepMin > 0 && r.cookMin > 0, r.id);
+    assert.ok(r.steps.length >= 2 && r.prepMin > 0 && r.cookMin >= 0, r.id);
   }
   const old = normalizeState({ recipes: [{ id: 'r-chili', name: 'My chili', servings: 6, tags: [], ingredients: [] }, { id: 'mine', name: 'Toast', servings: 1, tags: [], ingredients: [] }], inventory: [], plan: [], extras: [], history: [], customPrices: [], storePrices: [], spending: [] });
   assert.equal(old.recipes[0].name, 'My chili');

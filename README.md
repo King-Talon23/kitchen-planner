@@ -9,13 +9,31 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
 - **Inventory** by pantry, fridge and freezer, with best-before dates and an
   optional "keep at least" level for staples (milk, eggs, bread).
 - **Meal suggestions** ranked by how much of each recipe you already have,
-  with recipes that use food about to expire pushed to the top. Each one
-  shows its prep and cook time and opens to step-by-step instructions. Times
-  are estimates for one home cook. Meat, fish and egg steps give Health
-  Canada's [safe internal cooking temperatures](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/safe-internal-cooking-temperatures.html)
-  (71°C ground beef and pork, 74°C chicken and egg dishes, 70°C fish), so
-  check with a thermometer rather than the clock. Your own recipes can have
-  steps and times too.
+  with recipes that use food about to expire pushed to the top. There are 45
+  starter recipes. Each one shows its prep and cook time and opens to
+  step-by-step instructions. The times are estimates for one home cook. Meat,
+  fish and egg steps give Health Canada's
+  [safe internal cooking temperatures](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/safe-internal-cooking-temperatures.html)
+  (71°C for ground beef and pork, 74°C for chicken and egg dishes, 70°C for
+  fish), so check with a thermometer rather than trusting the clock.
+- **Ideas from what you have.** The Today tab also builds meals straight from
+  your inventory: stir-fries, sheet-pan roasts, pasta, omelettes, soups, rice
+  bowls and wraps. Ideas change as you add food. They prefer food that is about
+  to expire, then food none of your recipes use yet, so new groceries show up
+  right away, even ones the price list doesn't know (zucchini, eggplant,
+  ground turkey...). You can cook an idea or save it as a recipe.
+- **Find recipes online** (Recipes tab). This searches
+  [TheMealDB](https://www.themealdb.com/), a free recipe database, by
+  ingredient. It also suggests a one-tap search for each food in your kitchen
+  that no recipe uses. A recipe you save keeps its ingredients and steps and
+  works offline.
+  - TheMealDB doesn't give servings or times, so servings default to 4 and the
+    time is added up from the minutes the steps mention. Both are marked as
+    estimates for you to correct.
+  - Its [terms](https://www.themealdb.com/terms_of_use.php) allow copying
+    what the API returns, with credit, which the app shows. The free key is
+    meant for development and personal use; publishing to an app store needs
+    a paid key.
 - **Log a meal** ("I made this") and its ingredients come out of the
   inventory, scaled to the servings you made, oldest stock first.
 - **Weekly plan and shopping list.** Auto-plan picks the meals that add the
