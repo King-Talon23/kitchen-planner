@@ -66,7 +66,7 @@ button.ghost, .button.ghost { background: transparent; color: var(--accent); }
 button.small { padding: 4px 10px; font-size: 0.875rem; }
 button.danger { color: var(--danger); border-color: var(--danger); }
 
-input, select {
+input, select, textarea {
   font: inherit; color: var(--text); background: var(--surface);
   border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
   min-width: 0;
@@ -146,3 +146,9 @@ summary { cursor: pointer; color: var(--accent); }
   .table.receipt select, .table.receipt input.num { max-width: 100%; }
   .table td[data-label]::before { content: attr(data-label); display: block; font-size: 0.75rem; color: var(--muted); }
 }
+
+.steps { margin: 6px 0; }
+.steps summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.steps ol { margin: 8px 0 4px; padding-left: 1.4em; }
+.steps li { margin: 4px 0; line-height: 1.45; }
+textarea { width: 100%; font: inherit; resize: vertical; }
