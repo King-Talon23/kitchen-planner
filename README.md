@@ -19,6 +19,20 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
   choose what to drop. "I bought these" moves the purchases into inventory.
 - **Prices** default to Statistics Canada national averages and can be
   changed to match your store.
+- **Store and flyer prices.** Enter a price from a flyer, shelf tag or receipt
+  with its store and sale end date. The shopping list uses the cheapest
+  current price and shows which store it's at.
+- **Spending log.** "I bought these" asks what you actually paid, or you can
+  record a shop by hand. The Spending tab shows each week against the budget,
+  and money already spent this week comes off the shopping list's budget.
+- **Barcode scanning.** Scan a product with the phone camera (or type the
+  number) to look it up in Open Food Facts and add it to inventory. Barcodes
+  you've added before are remembered and work offline.
+- **Nutrition targets.** From your height, weight, age, sex, activity and goal,
+  the app estimates daily calories and protein, shows how much of that the
+  week's planned meals cover, lists calories and protein per serving for each
+  recipe, and ranks foods by calories and protein per dollar.
+- **Sync between devices** through a secret GitHub Gist (see below).
 - Works offline and can be installed to a phone's home screen.
 
 ## Running it
@@ -52,6 +66,49 @@ Nothing is sent anywhere. Two things to know:
 - So use **Settings → Export backup** now and then. The same file moves your
   data to another device with **Import backup**.
 
+## Syncing your phone and laptop
+
+Settings → Sync between devices. Make a GitHub fine-grained personal access
+token with only **Gists: read and write** and paste it on each device. The app
+saves your data to one secret gist and keeps every device up to date: when only
+one side changed it copies that side, and when both changed since the last sync
+it asks which copy to keep. ([GitHub Gists API](https://docs.github.com/en/rest/gists/gists))
+
+The token stays in that browser. It is never put in backups or in the gist.
+A secret gist is unlisted, not encrypted, so anyone who has its link can read it.
+
+## Nutrition targets, and where they come from
+
+- Resting energy: Mifflin-St Jeor equation, which a systematic review found
+  most likely to estimate within 10% of measured values
+  ([Frankenfield et al. 2005](https://doi.org/10.1016/j.jada.2005.02.005)).
+- Activity: midpoints of the FAO/WHO/UNU physical activity level bands
+  ([FAO 2001, table 5.3](https://www.fao.org/3/y5686e/y5686e07.htm)).
+- Gaining weight: a 10–20% surplus, 1.6–2.2 g protein and 0.5–1.5 g fat per
+  kg each day, gaining about 0.25–0.5% of body weight a week
+  ([Iraki et al. 2019](https://doi.org/10.3390/sports7070154); written for
+  people doing resistance training). Muscle gains from protein level off
+  around 1.6 g/kg ([Morton et al. 2018](https://doi.org/10.1136/bjsports-2017-097608)).
+- Food values: USDA FoodData Central, SR Legacy, per 100 g as purchased
+  (`src/data/nutrients.js` lists each food's FDC id).
+
+These are planning estimates, not medical advice.
+
+## Barcodes
+
+Products are looked up in [Open Food Facts](https://openfoodfacts.github.io/openfoodfacts-server/api/),
+a free open database (product reads are limited to 15 a minute). Scanning uses
+the browser's [Barcode Detection API](https://developer.mozilla.org/en-US/docs/Web/API/Barcode_Detection_API)
+where it exists. Elsewhere (for example Safari), it uses the
+[barcode-detector](https://github.com/Sec-ant/barcode-detector) ponyfill, which
+is vendored in `vendor/`, so scanning works offline.
+
+## Flyer prices
+
+I couldn't find an official public API for Canadian grocery flyers (Flipp, for
+example, doesn't document one publicly). Instead, prices you type in from flyers or receipts drive the
+list.
+
 ## Where the prices come from
 
 Default prices are from Statistics Canada,
@@ -84,14 +141,21 @@ src/shopping.js           shopping list, budget, auto-plan
 src/store.js              save/load, backup import/export
 src/data/prices.js        StatCan default prices
 src/data/recipes.js       starter recipes
+src/data/nutrients.js     USDA nutrient values per food
+src/spending.js           spending log and weekly totals
+src/barcode.js            scanning and Open Food Facts lookup
+src/nutrition.js          calorie/protein targets, recipe nutrition
+src/sync.js               GitHub Gist sync
+src/views-more.js         screens for the above
+vendor/barcode-detector/  barcode scanner for browsers without one
 sw.js                     offline cache
 test/                     node:test tests for the logic
 ```
 
 ## Ideas for later
 
-- Sync between phone and laptop (needs a small backend or a sync service).
-- Barcode scanning to add groceries faster.
-- Weekly flyer prices for your local stores instead of national averages.
-- Spending history: what you actually paid each week against the budget.
-- Nutrition targets for the plan (e.g. Canada's Food Guide plate proportions).
+- Track what you eat each day against the calorie and protein targets.
+- Let auto-plan favour recipes that close your calorie and protein gap.
+- A Canada's Food Guide plate check of the plan (half vegetables and fruits,
+  a quarter protein foods, a quarter whole grains;
+  [Health Canada](https://www.canada.ca/en/health-canada/services/food-guide/eating-support/cooking/make-healthy-meals-plate.html)).
