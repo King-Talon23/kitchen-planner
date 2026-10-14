@@ -38,6 +38,10 @@ export const AVG_WEIGHT_G = {
   'chicken breast': 200,
   'chicken thigh': 120,
   'chicken drumstick': 110,
+  // USDA FoodData Central SR Legacy portions: white bread 1 slice = 27.3 g
+  // (FDC 325871), pita 1 large = 60 g (FDC 174915).
+  bread: 27,
+  pita: 60,
 };
 
 export function normalizeUnit(unit) {
