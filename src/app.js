@@ -3,7 +3,7 @@
 
 import { load, save, exportState, importState, defaultState } from './store.js';
 import { UNITS, formatQty } from './units.js';
-import { money, esc, unitOptions } from './ui.js';
+import { money, esc, unitOptions, recipeTime, recipeSteps } from './ui.js';
 import { addToInventory, logMeal, lowStock, expiringSoon, newId, today, canonicalName } from './inventory.js';
 import { suggestMeals } from './suggest.js';
 import { buildShoppingList, effectiveCatalog, autoPlan } from './shopping.js';
@@ -111,8 +111,10 @@ function renderToday() {
         <strong>${esc(s.recipe.name)}</strong>
         <span class="pill">${Math.round(s.coverage * 100)}% on hand</span>
       </div>
+      ${recipeTime(s.recipe) ? `<p class="muted small">⏱ ${recipeTime(s.recipe)} · serves ${s.recipe.servings}</p>` : ''}
       ${s.usesExpiring.length ? `<p class="warn">Uses ${esc(s.usesExpiring.join(', '))} before ${s.usesExpiring.length > 1 ? 'they expire' : 'it expires'}</p>` : ''}
       ${s.missing.length ? `<p class="muted">Missing: ${s.missing.map((m) => `${esc(m.name)} (${formatQty(m.qty, m.unit)})`).join(', ')}</p>` : ''}
+      ${recipeSteps(s.recipe)}
       <div class="row">
         <button data-action="cook" data-id="${s.recipe.id}">I made this</button>
         <button class="ghost" data-action="plan-add" data-id="${s.recipe.id}">Add to plan</button>
@@ -286,8 +288,13 @@ function renderRecipes() {
           <label>Serves <input name="servings" type="number" min="1" step="1" required value="${editing?.servings ?? 4}" class="num"></label>
           <label>Tags <input name="tags" value="${esc(editing?.tags?.join(', '))}" placeholder="dinner, vegetarian"></label>
         </div>
+        <div class="row wrap">
+          <label>Prep minutes <input name="prepMin" type="number" min="0" step="1" value="${editing?.prepMin ?? ''}" class="num"></label>
+          <label>Cook minutes <input name="cookMin" type="number" min="0" step="1" value="${editing?.cookMin ?? ''}" class="num"></label>
+        </div>
         <div id="ings">${(editing?.ingredients ?? [undefined, undefined, undefined]).map(ingRow).join('')}</div>
         <p class="muted small">Optional ingredients (spices, garnish) never block a suggestion or go on the shopping list.</p>
+        <label>Steps, one per line <textarea name="steps" rows="6" placeholder="Heat the oven to 200°C (400°F).">${esc(editing?.steps?.join('\n') ?? '')}</textarea></label>
         <div class="row">
           <button type="button" class="ghost" data-action="ing-add">Add ingredient</button>
           <button>${editing ? 'Save recipe' : 'Add recipe'}</button>
@@ -301,8 +308,9 @@ function renderRecipes() {
       <h2>Your recipes (${state.recipes.length})</h2>
       <ul class="cards">${state.recipes.map((r) => `
         <li class="card">
-          <div class="row space"><strong>${esc(r.name)}</strong><span class="muted small">serves ${r.servings}</span></div>
+          <div class="row space"><strong>${esc(r.name)}</strong><span class="muted small">serves ${r.servings}${recipeTime(r) ? ` · ${recipeTime(r)}` : ''}</span></div>
           <p class="muted small">${r.ingredients.map((i) => `${esc(i.name)} ${i.qty} ${esc(UNITS[i.unit]?.label ?? i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
+          ${recipeSteps(r, 'Steps')}
           <div class="row">
             <button class="ghost small" data-action="recipe-edit" data-id="${r.id}">Edit</button>
             <button class="ghost small" data-action="recipe-delete" data-id="${r.id}">Delete</button>
@@ -710,6 +718,8 @@ function saveRecipe(form, data) {
   const recipe = {
     id: editingRecipeId ?? newId('r'), name: data.name.trim(), servings: Number(data.servings),
     tags: String(data.tags || '').split(',').map((t) => t.trim()).filter(Boolean), ingredients,
+    prepMin: data.prepMin === '' ? null : Number(data.prepMin), cookMin: data.cookMin === '' ? null : Number(data.cookMin),
+    steps: String(data.steps || '').split('\n').map((t) => t.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean),
   };
   const idx = state.recipes.findIndex((r) => r.id === recipe.id);
   if (idx >= 0) state.recipes[idx] = recipe;

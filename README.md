@@ -9,7 +9,13 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
 - **Inventory** by pantry, fridge and freezer, with best-before dates and an
   optional "keep at least" level for staples (milk, eggs, bread).
 - **Meal suggestions** ranked by how much of each recipe you already have,
-  with recipes that use food about to expire pushed to the top.
+  with recipes that use food about to expire pushed to the top. Each one
+  shows its prep and cook time and opens to step-by-step instructions. Times
+  are estimates for one home cook. Meat, fish and egg steps give Health
+  Canada's [safe internal cooking temperatures](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/safe-internal-cooking-temperatures.html)
+  (71°C ground beef and pork, 74°C chicken and egg dishes, 70°C fish), so
+  check with a thermometer rather than the clock. Your own recipes can have
+  steps and times too.
 - **Log a meal** ("I made this") and its ingredients come out of the
   inventory, scaled to the servings you made, oldest stock first.
 - **Weekly plan and shopping list.** Auto-plan picks the meals that add the

@@ -227,3 +227,19 @@ test('calories per dollar ranks cheap dense staples first', () => {
   assert.ok(!top.includes('sugar'));
   assert.ok(top.some((k) => ['flour', 'vegetable oil', 'canola oil', 'white rice', 'peanut butter'].includes(k)), top.join(','));
 });
+
+test('starter recipes have steps and times, and old saves get them filled in', async () => {
+  const { DEFAULT_RECIPES } = await import('../src/data/recipes.js');
+  const { normalizeState } = await import('../src/store.js');
+  const { recipeTime } = await import('../src/ui.js');
+  for (const r of DEFAULT_RECIPES) {
+    assert.ok(r.steps.length >= 3 && r.prepMin > 0 && r.cookMin > 0, r.id);
+  }
+  const old = normalizeState({ recipes: [{ id: 'r-chili', name: 'My chili', servings: 6, tags: [], ingredients: [] }, { id: 'mine', name: 'Toast', servings: 1, tags: [], ingredients: [] }], inventory: [], plan: [], extras: [], history: [], customPrices: [], storePrices: [], spending: [] });
+  assert.equal(old.recipes[0].name, 'My chili');
+  assert.ok(old.recipes[0].steps.length > 0);
+  assert.equal(old.recipes[1].steps, undefined);
+  assert.equal(recipeTime({ prepMin: 10, cookMin: 45 }), '55 min (10 prep, 45 cook)');
+  assert.equal(recipeTime({ prepMin: 15, cookMin: 60 }), '1 h 15 min (15 prep, 60 cook)');
+  assert.equal(recipeTime({}), '');
+});

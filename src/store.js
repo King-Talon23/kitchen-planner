@@ -39,6 +39,12 @@ export function normalizeState(raw) {
   if (typeof state.barcodes !== 'object' || state.barcodes === null) state.barcodes = {};
   if (typeof state.receiptAliases !== 'object' || state.receiptAliases === null) state.receiptAliases = {};
   state.profile = { ...base.profile, ...(raw.profile || {}) };
+  // Saves made before recipes had steps: fill in the starter recipes' steps and times.
+  for (const recipe of state.recipes) {
+    const starter = DEFAULT_RECIPES.find((r) => r.id === recipe.id);
+    if (!starter || recipe.steps) continue;
+    Object.assign(recipe, { prepMin: starter.prepMin, cookMin: starter.cookMin, steps: [...starter.steps] });
+  }
   state.version = SCHEMA_VERSION;
   return state;
 }

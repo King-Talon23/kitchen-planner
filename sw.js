@@ -2,7 +2,7 @@
 // from the network whenever it is reachable (stale-while-revalidate).
 // Bump CACHE when the file list changes.
 
-const CACHE = 'kitchen-planner-v4';
+const CACHE = 'kitchen-planner-v5';
 const FILES = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png',
   'src/app.js', 'src/store.js', 'src/units.js', 'src/inventory.js', 'src/suggest.js', 'src/shopping.js',
