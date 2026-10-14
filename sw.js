@@ -2,12 +2,12 @@
 // from the network whenever it is reachable (stale-while-revalidate).
 // Bump CACHE when the file list changes.
 
-const CACHE = 'kitchen-planner-v2';
+const CACHE = 'kitchen-planner-v3';
 const FILES = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png',
   'src/app.js', 'src/store.js', 'src/units.js', 'src/inventory.js', 'src/suggest.js', 'src/shopping.js',
   'src/ui.js', 'src/views-more.js', 'src/spending.js', 'src/sync.js', 'src/barcode.js', 'src/nutrition.js',
-  'src/data/prices.js', 'src/data/recipes.js', 'src/data/nutrients.js',
+  'src/data/prices.js', 'src/data/statcan-latest.js', 'src/data/recipes.js', 'src/data/nutrients.js',
   'vendor/barcode-detector/ponyfill.js', 'vendor/barcode-detector/zxing-exported.js', 'vendor/barcode-detector/zxing_reader.wasm',
 ];
 
