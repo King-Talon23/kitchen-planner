@@ -89,6 +89,21 @@ function amountIn100s(name, base, data) {
   return base.qty / 100;
 }
 
+// Grams of an ingredient amount, or null when a count ("2 ea") has no known
+// weight. Used for the plate check.
+export function gramsOf(name, qty, unit, catalog) {
+  const key = canonicalName(name, catalog);
+  const base = toBase(qty, unit);
+  const data = NUTRIENTS[key] ?? NUTRIENTS[normalizeName(name)] ?? {};
+  const hundreds = amountIn100s(key, base, data);
+  return hundreds == null ? null : hundreds * 100;
+}
+
+// Energy (kcal) of one serving, and protein, for each recipe; cached per call.
+export function servingNutritionMap(recipes, catalog) {
+  return new Map(recipes.map((r) => [r.id, recipeNutrition(r, catalog).perServing]));
+}
+
 export function ingredientNutrition(name, qty, unit, catalog) {
   const data = nutrientsFor(name, catalog);
   if (!data) return null;

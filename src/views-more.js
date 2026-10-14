@@ -6,6 +6,7 @@ import { ACTIVITY, GOALS, LB_PER_KG, CM_PER_IN, dailyTargets, planNutrition, rec
 import { spendingSummary, spentInWeek, weekStart } from './spending.js';
 import { activeStorePrices, STORE_PRICE_DAYS } from './shopping.js';
 import { today } from './inventory.js';
+import { planPlate, PLATE_SOURCE } from './plate.js';
 import { eatenOn, recentDays, leftovers, weightTrend, trendAdvice, LEFTOVER_DAYS } from './foodlog.js';
 import { DEFAULT_PRICES } from './data/prices.js';
 import { NUTRIENT_SOURCE, NUTRIENTS } from './data/nutrients.js';
@@ -84,6 +85,7 @@ export function renderNutrition(state, cat, { date = today() } = {}) {
       <p>Sex, age, height and weight are needed for the calorie estimate.</p>
     </section>`}
 
+    ${renderPlate(state, cat)}
     ${renderFoodLog(state, cat, t, date)}
     ${renderWeight(state, t)}
 
@@ -112,6 +114,34 @@ export function renderNutrition(state, cat, { date = today() } = {}) {
 }
 
 const fmtDay = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+function renderPlate(state, cat) {
+  if (!state.plan.length) return '';
+  const p = planPlate(state, cat);
+  const row = (label, value, aim) => `
+    <div class="meter">
+      <div class="row space"><span>${label}</span><span>${value}% <span class="muted small">(plate: ${aim}%)</span></span></div>
+      <div class="bar"><div style="width:${value}%"></div></div>
+    </div>`;
+  const tip = {
+    vegfruit: 'Vegetables and fruits are well under half. Adding a side of vegetables or fruit, such as a salad or frozen vegetables, to a few meals would raise it.',
+    wholegrain: 'Most of the grains are refined. Brown rice, or whole grain pasta and bread (whole grain listed first in the ingredients), count as whole grains.',
+    protein: 'Protein foods are under a quarter.',
+  };
+  return `
+    <section>
+      <h2>Plate check for this week's plan</h2>
+      <p class="muted small">Canada's Food Guide plate: half vegetables and fruits, a quarter protein foods, a quarter whole grain foods.</p>
+      ${row('Vegetables and fruits', p.share.vegfruit, 50)}
+      ${row('Protein foods', p.share.protein, 25)}
+      ${row(`Grains (${p.share.wholegrain}% whole grain)`, p.share.grains, 25)}
+      ${p.tips.map((k) => `<p>${tip[k]}</p>`).join('')}
+      ${p.lowVeg.length ? `<p class="muted">Fewest vegetables and fruits: ${p.lowVeg.map((x) => `${esc(x.recipe.name)} (${x.share}%)`).join(', ')}.</p>` : ''}
+      <p class="muted small">Measured by the weight of each food in the recipe, with dry rice, pasta and legumes counted at their cooked weight; oils, sauces, milk, processed meats and sugar are left out, as in the Food Guide's groups. The plate is about space on your plate, so treat this as a rough guide.
+        Sources: <a href="${PLATE_SOURCE}" target="_blank" rel="noopener">Health Canada healthy plate</a>,
+        <a href="https://www.canada.ca/en/health-canada/services/publications/food-nutrition/2019-canada-food-guide-food-classification-system-foods-beverages-categories.html" target="_blank" rel="noopener">Food Guide food classification</a>.</p>
+    </section>`;
+}
 
 function renderFoodLog(state, cat, t, date) {
   const { entries, totals } = eatenOn(state, date);
