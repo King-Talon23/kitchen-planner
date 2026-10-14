@@ -2,21 +2,30 @@
 // up forms and buttons through event delegation.
 
 import { load, save, exportState, importState, defaultState } from './store.js';
-import { UNIT_KEYS, UNITS, formatQty } from './units.js';
+import { UNITS, formatQty } from './units.js';
+import { money, esc, unitOptions } from './ui.js';
 import { addToInventory, logMeal, lowStock, expiringSoon, newId, today, canonicalName } from './inventory.js';
 import { suggestMeals } from './suggest.js';
 import { buildShoppingList, effectiveCatalog, autoPlan } from './shopping.js';
 import { DEFAULT_PRICES, PRICE_SOURCE } from './data/prices.js';
+import { addSpend } from './spending.js';
+import { lookupBarcode, rememberBarcode, startScanner } from './barcode.js';
+import { loadSyncConfig, saveSyncConfig, syncNow, resolveConflict } from './sync.js';
+import { CM_PER_IN, LB_PER_KG } from './nutrition.js';
+import { renderNutrition, renderSpending, renderStorePrices, renderScanner, renderSync } from './views-more.js';
 
 let state = load();
 let tab = sessionGet('tab') || 'today';
 let editingRecipeId = null;
+let scan = { open: false };
+let scanner = null;
+let syncConfig = loadSyncConfig();
+let syncStatus = '';
+let syncTimer = null;
+let syncing = false;
 const app = document.getElementById('app');
 
 const LOCATIONS = ['pantry', 'fridge', 'freezer'];
-const money = (n) => (n == null ? '—' : n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }));
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const unitOptions = (selected = 'ea') => UNIT_KEYS.map((u) => `<option value="${u}" ${u === selected ? 'selected' : ''}>${UNITS[u].label}</option>`).join('');
 const catalog = () => effectiveCatalog(state);
 
 function sessionGet(key) {
@@ -26,7 +35,8 @@ function sessionSet(key, value) {
   try { sessionStorage.setItem(`kp-${key}`, value); } catch { /* private mode */ }
 }
 
-function commit(message) {
+function commit(message, { touch = true } = {}) {
+  if (touch) state.updatedAt = new Date().toISOString();
   try {
     save(state);
   } catch (err) {
@@ -35,6 +45,43 @@ function commit(message) {
   }
   render();
   if (message) toast(message);
+  if (touch) scheduleSync();
+}
+
+// ---------- Sync ----------
+
+function scheduleSync(delay = 4000) {
+  if (!syncConfig.token) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => runSync(), delay);
+}
+
+async function runSync({ manual = false } = {}) {
+  if (!syncConfig.token || syncing || !navigator.onLine) return;
+  syncing = true;
+  try {
+    let result = await syncNow(state, syncConfig);
+    if (result.action === 'conflict') {
+      const keepHere = confirm('This device and your other device both have changes since the last sync.\n\nOK: keep THIS device\'s data (the other copy is replaced).\nCancel: use the OTHER device\'s data (this copy is replaced).\n\nExport a backup first if you are unsure.');
+      result = await resolveConflict(keepHere ? 'local' : 'remote', state, result.remote, result.config);
+    }
+    syncConfig = result.config;
+    saveSyncConfig(syncConfig);
+    syncStatus = '';
+    if (result.action === 'pulled') {
+      state = result.state;
+      commit('Updated with changes from your other device.', { touch: false });
+    } else {
+      if (manual) toast({ created: 'Sync turned on.', pushed: 'Synced.', unchanged: 'Already up to date.' }[result.action]);
+      if (tab === 'settings') render();
+    }
+  } catch (err) {
+    syncStatus = `sync failed: ${err.message}`;
+    if (manual || tab === 'settings') toast(`Sync failed: ${err.message}`);
+    if (tab === 'settings') render();
+  } finally {
+    syncing = false;
+  }
 }
 
 let toastTimer;
@@ -112,6 +159,7 @@ function renderInventory() {
   return `
     <section>
       <h2>Add to inventory</h2>
+      ${renderScanner(scan)}
       <form data-form="inventory" class="grid">
         <label>Item <input name="name" list="food-names" required autocomplete="off" placeholder="e.g. milk"></label>
         <label>Amount <input name="qty" type="number" min="0" step="any" required></label>
@@ -153,7 +201,7 @@ function renderPlan() {
   const row = (i) => `
     <li class="shop-item">
       <label class="row"><input type="checkbox" data-action="noop">
-        <span><strong>${esc(i.name)}</strong> · buy ${esc(i.buy)}
+        <span><strong>${esc(i.name)}</strong> · buy ${esc(i.buy)}${i.store ? ` <span class="pill">${esc(i.store)}${i.until ? ` until ${esc(i.until.slice(5))}` : ''}</span>` : ''}
           <span class="muted small">(need ${esc(i.need)}; ${esc(reasonLabel[i.reason])}${i.sources.length && i.reason === 'plan' ? `: ${esc(i.sources.join(', '))}` : ''})</span>
         </span>
       </label>
@@ -187,6 +235,7 @@ function renderPlan() {
       <h2>Shopping list</h2>
       <div class="budget">
         <div class="row space"><span>${money(list.total)} of ${money(list.budget)}</span><span>${money(list.remaining)} left</span></div>
+        ${list.spent ? `<p class="muted small">${money(list.weekly)} weekly budget minus ${money(list.spent)} already spent this week.</p>` : ''}
         <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${list.budget}" aria-valuenow="${list.total}"><div style="width:${pct}%"></div></div>
       </div>
       ${list.items.length ? `<ul class="shop">${list.items.map(row).join('')}</ul>` : '<p class="muted">Nothing to buy. Plan some meals or set restock levels in Inventory.</p>'}
@@ -292,7 +341,50 @@ function renderPrices() {
         <input name="price" type="number" min="0" step="0.01" placeholder="Price" required class="num">
         <button class="ghost">Add</button>
       </form>
-    </section>`;
+    </section>
+    ${renderStorePrices(state)}`;
+}
+
+// ---------- Barcode scanning ----------
+
+function closeScanner() {
+  scanner?.stop();
+  scanner = null;
+  scan = { open: false };
+}
+
+async function startCamera() {
+  scan = { ...scan, scanning: true, message: '', error: false, product: null };
+  render();
+  const video = document.getElementById('scan-video');
+  try {
+    scanner = startScanner(video);
+    const code = await scanner.result;
+    scanner = null;
+    if (code) await findProduct(code);
+  } catch (err) {
+    scanner = null;
+    const messages = {
+      NotAllowedError: 'Camera permission was denied. Type the barcode number instead.',
+      NotFoundError: 'No camera found. Type the barcode number instead.',
+    };
+    scan = { ...scan, scanning: false, error: true, message: messages[err?.name] ?? err.message };
+    render();
+  }
+}
+
+async function findProduct(code) {
+  scan = { ...scan, scanning: false, code, message: 'Looking up…', error: false, product: null };
+  render();
+  try {
+    const product = await lookupBarcode(code, state, catalog());
+    scan = product
+      ? { ...scan, product, message: product.key ? '' : 'No matching price item; edit the name if you like.' }
+      : { ...scan, error: true, message: 'Not found in Open Food Facts. Add it by hand below the scanner.' };
+  } catch (err) {
+    scan = { ...scan, error: true, message: err.message };
+  }
+  render();
 }
 
 // ---------- Settings ----------
@@ -319,10 +411,14 @@ function renderSettings() {
         <label class="button ghost">Import backup <input type="file" accept="application/json,.json" data-change="import" hidden></label>
         <button class="ghost danger" data-action="reset">Erase everything</button>
       </div>
-    </section>`;
+    </section>
+    ${renderSync(syncConfig, syncStatus)}`;
 }
 
-const VIEWS = { today: renderToday, inventory: renderInventory, plan: renderPlan, recipes: renderRecipes, prices: renderPrices, settings: renderSettings };
+const VIEWS = {
+  today: renderToday, inventory: renderInventory, plan: renderPlan, recipes: renderRecipes, prices: renderPrices,
+  nutrition: () => renderNutrition(state, catalog()), spending: () => renderSpending(state), settings: renderSettings,
+};
 
 function render() {
   if (!VIEWS[tab]) tab = 'today';
@@ -382,7 +478,13 @@ function boughtEverything() {
   }
   const boughtManual = new Set(list.items.filter((i) => i.reason === 'manual').map((i) => canonicalName(i.name, cat)));
   state.extras = state.extras.filter((e) => !boughtManual.has(canonicalName(e.name, cat)));
-  commit(`Added ${list.items.length} items to inventory.`);
+  const paid = prompt('What did you pay in total? (Leave blank to skip the spending log.)', list.total.toFixed(2));
+  let note = '';
+  if (paid != null && paid.trim() !== '' && Number.isFinite(Number(paid))) {
+    addSpend(state, { amount: Number(paid), store: [...new Set(list.items.map((i) => i.store).filter(Boolean))].join(', '), note: `${list.items.length} items` });
+    note = ` Logged ${money(Number(paid))} in Spending.`;
+  }
+  commit(`Added ${list.items.length} items to inventory.${note}`);
 }
 
 function listAsText() {
@@ -405,6 +507,7 @@ document.addEventListener('click', async (event) => {
     tab = tabButton.dataset.tab;
     sessionSet('tab', tab);
     editingRecipeId = null;
+    closeScanner();
     render();
     app.focus();
     return;
@@ -439,6 +542,27 @@ document.addEventListener('click', async (event) => {
       return commit(reason);
     }
     case 'bought': return boughtEverything();
+    case 'scan-open':
+      scan = { open: true };
+      render();
+      if ('BarcodeDetector' in window || navigator.mediaDevices?.getUserMedia) startCamera();
+      return;
+    case 'scan-close':
+      closeScanner();
+      return render();
+    case 'scan-start': return startCamera();
+    case 'spend-delete':
+      state.spending = state.spending.filter((s) => s.id !== id);
+      return commit();
+    case 'store-price-delete':
+      state.storePrices = state.storePrices.filter((p) => p.id !== id);
+      return commit();
+    case 'sync-now': return runSync({ manual: true });
+    case 'sync-off':
+      if (!confirm('Turn off sync on this device? Your data stays here and in the gist.')) return;
+      syncConfig = { token: '', gistId: '', lastSynced: null, lastSyncAt: null };
+      saveSyncConfig(syncConfig);
+      return render();
     case 'copy-list':
       try {
         await navigator.clipboard.writeText(listAsText());
@@ -512,6 +636,47 @@ document.addEventListener('submit', (event) => {
           pack: { qty: Number(data.qty), unit: data.unit }, aliases: [], perWeight: false, category: 'other', custom: true,
         });
         return commit(`Price added for ${data.key}.`);
+      case 'spend':
+        addSpend(state, data);
+        return commit(`Recorded ${money(Number(data.amount))}.`);
+      case 'store-price': {
+        const price = Number(data.price);
+        const qty = Number(data.qty);
+        if (!(price >= 0) || !(qty > 0)) throw new Error('Enter a price and an amount');
+        if (!UNITS[data.unit]) throw new Error('Pick a unit');
+        state.storePrices.push({
+          id: newId('sp'), key: data.key.trim().toLowerCase(), store: data.store.trim(), price, qty, unit: data.unit,
+          perWeight: Boolean(data.perWeight), until: data.until || '', seen: today(),
+        });
+        return commit(`Saved the ${data.store.trim()} price for ${data.key.trim()}.`);
+      }
+      case 'profile': {
+        const inches = Number(data.ft || 0) * 12 + Number(data.in || 0);
+        Object.assign(state.profile, {
+          sex: data.sex, age: data.age === '' ? '' : Number(data.age), activity: data.activity, goal: data.goal,
+          heightCm: inches ? Math.round(inches * CM_PER_IN * 10) / 10 : '',
+          weightKg: data.lb === '' ? '' : Math.round((Number(data.lb) / LB_PER_KG) * 1000) / 1000,
+          goalWeightKg: data.goalLb === '' ? '' : Math.round((Number(data.goalLb) / LB_PER_KG) * 1000) / 1000,
+        });
+        return commit('Details saved.');
+      }
+      case 'scan-code':
+        if (!data.code.trim()) return;
+        scanner?.stop();
+        findProduct(data.code.trim());
+        return;
+      case 'scan-add': {
+        const item = addToInventory(state, data, catalog());
+        if (scan.product) rememberBarcode(state, { ...scan.product, name: item.name, key: scan.product.key, qty: Number(data.qty), unit: data.unit });
+        closeScanner();
+        return commit(`Added ${item.name}.`);
+      }
+      case 'sync':
+        syncConfig = { ...syncConfig, token: data.token.trim() };
+        saveSyncConfig(syncConfig);
+        render();
+        runSync({ manual: true });
+        return;
       case 'settings':
         for (const key of ['budget', 'people', 'mealsPerWeek', 'expiryWarningDays']) state.settings[key] = Number(data[key]);
         return commit('Settings saved.');
@@ -578,6 +743,12 @@ document.addEventListener('change', async (event) => {
 
 // Ask the browser not to clear our data under storage pressure.
 navigator.storage?.persist?.().catch(() => {});
+
+// Pick up changes from the other device when the app opens or comes back.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') scheduleSync(0);
+});
+scheduleSync(0);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Offline mode unavailable', err));

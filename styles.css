@@ -113,6 +113,22 @@ label.row { flex-direction: row; align-items: flex-start; color: var(--text); fo
 .shop-item input:checked + span { text-decoration: line-through; color: var(--muted); }
 .shop.over .shop-item { opacity: 0.75; }
 
+.bar.over > div, .bar.over > span { background: var(--danger); }
+.meter { margin: 10px 0; }
+.stats .card strong { font-size: 1.25rem; }
+.weeks { list-style: none; padding: 0; margin: 0; }
+.weeks li { display: grid; grid-template-columns: 3.5em 1fr 6em; gap: 8px; align-items: center; margin: 6px 0; }
+.weeks .bar { position: relative; display: block; margin: 0; }
+.weeks .bar > span { display: block; height: 100%; background: var(--accent); }
+.weeks .bar > i { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); }
+.weeks li > .small:last-child { text-align: right; }
+.list.plain { list-style: none; padding: 0; }
+.table tr.expired td { color: var(--muted); }
+.scan { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.scan video { width: 100%; max-height: 50vh; border-radius: 8px; background: #000; object-fit: cover; }
+details { margin: 8px 0 12px; }
+summary { cursor: pointer; color: var(--accent); }
+
 #toast {
   position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 40px);
   background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px;
