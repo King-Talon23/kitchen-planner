@@ -103,17 +103,35 @@ where it exists. Elsewhere (for example Safari), it uses the
 [barcode-detector](https://github.com/Sec-ant/barcode-detector) ponyfill, which
 is vendored in `vendor/`, so scanning works offline.
 
-## Flyer prices
+## Store prices, flyers and receipts
 
 I couldn't find an official public API for Canadian grocery flyers (Flipp, for
-example, doesn't document one publicly). Instead, prices you type in from flyers or receipts drive the
-list.
+example, doesn't document one publicly), and Walmart Canada's terms of use
+forbid scraping its site, so the app doesn't read store websites. Store prices
+come from you instead, two ways:
+
+- **Scan a receipt** (Spending tab). Take a photo; the text is read on your
+  device with [Tesseract.js](https://github.com/naptha/tesseract.js)
+  (Apache-2.0, loaded from jsDelivr the first time and cached after). You check
+  the matched items, then one Save records what you paid, adds the food to your
+  inventory and stores each price as a store price. Receipts abbreviate names
+  ("GRND BF MED"), so the matcher expands common abbreviations and remembers
+  every match you confirm or skip. Weighed items use the "kg @ $/kg" line
+  when the receipt prints one; otherwise you type the weight.
+- **Type a flyer or shelf price** (Prices tab), optionally with the sale's end date.
+
+A store price is used until its sale ends, or for 45 days after you saw it,
+and the cheapest active price wins over the StatCan default.
 
 ## Where the prices come from
 
 Default prices are from Statistics Canada,
 [Table 18-10-0245-01, Monthly average retail prices for selected products](https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1810024501),
-Canada, August 2026 (released 7 October 2026). They are national averages
+Canada, August 2026 (released 7 October 2026). A GitHub Action
+(`.github/workflows/update-prices.yml`) checks StatCan every Monday,
+downloads the full table when a new month is out, writes
+`src/data/statcan-latest.js`, runs the tests and commits the change, so the
+defaults follow the monthly releases without anyone editing them. They are national averages
 from retailer scanner data, so your store's prices will differ; edit them in
 the Prices tab. Basic groceries are zero-rated for GST/HST, so the list adds
 no tax ([CRA](https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/gst-hst-businesses/charge-collect-type-supply.html)).

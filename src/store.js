@@ -19,6 +19,7 @@ export function defaultState() {
     storePrices: [],
     spending: [],
     barcodes: {},
+    receiptAliases: {},
     profile: { sex: '', age: '', heightCm: '', weightKg: '', goalWeightKg: '', activity: 'light', goal: 'gain', units: 'imperial' },
     updatedAt: null,
     settings: { budget: 150, people: 1, mealsPerWeek: 14, expiryWarningDays: 3 },
@@ -36,6 +37,7 @@ export function normalizeState(raw) {
   }
   if (typeof state.priceOverrides !== 'object' || state.priceOverrides === null) state.priceOverrides = {};
   if (typeof state.barcodes !== 'object' || state.barcodes === null) state.barcodes = {};
+  if (typeof state.receiptAliases !== 'object' || state.receiptAliases === null) state.receiptAliases = {};
   state.profile = { ...base.profile, ...(raw.profile || {}) };
   state.version = SCHEMA_VERSION;
   return state;

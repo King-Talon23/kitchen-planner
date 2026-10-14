@@ -142,5 +142,7 @@ summary { cursor: pointer; color: var(--accent); }
   .table thead { display: none; }
   .table tr { display: grid; grid-template-columns: 1fr auto; padding: 6px 0; border-bottom: 1px solid var(--border); }
   .table td { border: 0; padding: 3px 8px; }
+  .table.receipt td[data-label="Item"], .table.receipt td[data-label="Amount bought"] { grid-column: 1 / -1; }
+  .table.receipt select, .table.receipt input.num { max-width: 100%; }
   .table td[data-label]::before { content: attr(data-label); display: block; font-size: 0.75rem; color: var(--muted); }
 }
