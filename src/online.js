@@ -6,8 +6,8 @@
 // to an app store needs a supporter key, which can be set here instead.
 //
 // TheMealDB gives ingredients, measures and instructions but no servings or
-// cooking times, so those are estimated: servings default to 4, and the
-// time is added up from the minutes and hours the steps mention.
+// cooking times, so those are estimated (see estimateTimes) and marked as
+// estimates for you to correct; servings default to 4.
 
 import { normalizeUnit, UNITS } from './units.js';
 import { newId } from './inventory.js';
@@ -77,6 +77,23 @@ export function minutesFromSteps(steps) {
   return total > 0 ? Math.round(total) : null;
 }
 
+// TheMealDB has no times, so estimate them: cooking is the larger of the
+// minutes the steps mention and a floor for the method they describe (steps
+// often give per-side or per-batch times); prep grows with the ingredient count.
+const METHOD_FLOOR = [
+  [/\b(slow cooker|crock ?pot)\b/i, 240],
+  [/\b(roast|bake|oven)\b/i, 35],
+  [/\b(simmer|stew|braise|soup|boil)\b/i, 30],
+  [/\b(fry|saut[eé]|stir|grill|griddle|pan)\b/i, 15],
+];
+
+export function estimateTimes(steps, requiredCount) {
+  const text = steps.join(' ');
+  const floor = METHOD_FLOOR.find(([re]) => re.test(text))?.[1] ?? 10;
+  const mentioned = minutesFromSteps(steps) ?? 0;
+  return { prepMin: Math.min(30, 5 + 2 * requiredCount), cookMin: Math.max(floor, mentioned) };
+}
+
 export function mealToRecipe(meal) {
   const ingredients = [];
   for (let n = 1; n <= 20; n += 1) {
@@ -95,10 +112,10 @@ export function mealToRecipe(meal) {
     });
   }
   const steps = splitSteps(meal.strInstructions);
-  const cook = minutesFromSteps(steps);
+  const { prepMin, cookMin } = estimateTimes(steps, ingredients.filter((i) => !i.optional).length);
   return {
     id: newId('r'), name: meal.strMeal, servings: 4, tags: [meal.strCategory, meal.strArea].filter(Boolean).map((t) => t.toLowerCase()),
-    ingredients: ingredients.map(({ note, ...i }) => i), steps, prepMin: 15, cookMin: cook,
+    ingredients: ingredients.map(({ note, ...i }) => i), steps, prepMin, cookMin,
     source: { name: 'TheMealDB', url: `https://www.themealdb.com/meal/${meal.idMeal}`, id: meal.idMeal, estimatedTime: true, estimatedServings: true },
     notes: ingredients.filter((i) => i.note).map((i) => `${i.name}: ${i.note}`),
   };

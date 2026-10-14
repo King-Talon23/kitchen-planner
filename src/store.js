@@ -28,7 +28,7 @@ export function defaultState() {
     receiptAliases: {},
     profile: { sex: '', age: '', heightCm: '', weightKg: '', goalWeightKg: '', activity: 'light', goal: 'gain', units: 'imperial' },
     updatedAt: null,
-    settings: { budget: 150, people: 1, mealsPerWeek: 14, expiryWarningDays: 3 },
+    settings: { budget: 150, people: 1, mealsPerWeek: 14, expiryWarningDays: 3, mealTimes: { breakfast: '08:00', lunch: '12:30', dinner: '18:30', snack: '15:30' } },
     lastBackup: null,
   };
 }

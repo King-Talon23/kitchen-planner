@@ -9,13 +9,26 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
 - **Inventory** by pantry, fridge and freezer, with best-before dates and an
   optional "keep at least" level for staples (milk, eggs, bread).
 - **Meal suggestions** ranked by how much of each recipe you already have,
-  with recipes that use food about to expire pushed to the top. There are 45
-  starter recipes. Each one shows its prep and cook time and opens to
-  step-by-step instructions. The times are estimates for one home cook. Meat,
+  with recipes that use food about to expire pushed to the top. There are 204
+  starter recipes (breakfasts, lunches, snacks, chicken, beef, pork, fish,
+  vegetarian, soups and batch meals), searchable in the Recipes tab. Each one
+  shows its prep and cook time and opens to step-by-step instructions. The
+  times are estimates for one home cook. Meat,
   fish and egg steps give Health Canada's
   [safe internal cooking temperatures](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/safe-internal-cooking-temperatures.html)
   (71°C for ground beef and pork, 74°C for chicken and egg dishes, 70°C for
   fish), so check with a thermometer rather than trusting the clock.
+  Storage notes follow Health Canada's
+  [leftovers advice](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/food-safety-tips-leftovers.html):
+  eat refrigerated leftovers within 2 to 3 days and reheat them to 74°C.
+- **Cooking schedule.** Each planned meal gets a day and a meal slot (breakfast,
+  lunch, dinner or snack), and the plan shows when to start cooking: the meal
+  time minus prep and cook time. Meal times are set in Settings. "Add to
+  calendar" downloads an iCalendar file
+  ([RFC 5545](https://www.rfc-editor.org/rfc/rfc5545)) with one "Cook: ..."
+  event per meal, including its ingredients and steps. Google Calendar, Apple
+  Calendar, Outlook and most schedule apps can import it. "Export JSON" gives
+  the same schedule as plain data, for apps that take that instead.
 - **Ideas from what you have.** The Today tab also builds meals straight from
   your inventory: stir-fries, sheet-pan roasts, pasta, omelettes, soups, rice
   bowls and wraps. Ideas change as you add food. They prefer food that is about
@@ -27,9 +40,11 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
   ingredient. It also suggests a one-tap search for each food in your kitchen
   that no recipe uses. A recipe you save keeps its ingredients and steps and
   works offline.
-  - TheMealDB doesn't give servings or times, so servings default to 4 and the
-    time is added up from the minutes the steps mention. Both are marked as
-    estimates for you to correct.
+  - TheMealDB doesn't give servings or times, so servings default to 4. The
+    cook time is the larger of the minutes the steps mention and a floor for
+    the cooking method (35 for oven, 30 for simmering, 15 for frying), and
+    prep grows with the number of ingredients. Both are marked as estimates
+    for you to correct.
   - Its [terms](https://www.themealdb.com/terms_of_use.php) allow copying
     what the API returns, with credit, which the app shows. The free key is
     meant for development and personal use; publishing to an app store needs

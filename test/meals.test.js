@@ -50,7 +50,7 @@ test('TheMealDB measures, steps and times are parsed', () => {
     strInstructions: 'Preheat oven to 350° F. Combine soy sauce and sugar. Bake 35 minutes.',
     strIngredient1: 'chicken breasts', strMeasure1: '2', strIngredient2: 'soy sauce', strMeasure2: '3/4 cup', strIngredient3: 'Pepper', strMeasure3: 'pinch',
   });
-  assert.equal(r.cookMin, 35);
+  assert.equal(r.cookMin, 35); // max of the 35 minutes mentioned and the oven floor
   assert.equal(r.ingredients[0].optional, false);
   assert.equal(r.ingredients[1].optional, true);
   assert.equal(r.ingredients[2].name, 'black pepper');
@@ -78,4 +78,45 @@ test('older saves get the new starter recipes once, without reviving deleted one
   loaded.recipes = loaded.recipes.filter((r) => r.id !== 'r-beef-stew');
   const again = normalizeState(JSON.parse(JSON.stringify(loaded)));
   assert.ok(!again.recipes.some((r) => r.id === 'r-beef-stew'), 'a new starter you delete stays deleted');
+});
+
+test('online recipes always get a time estimate', async () => {
+  const { estimateTimes } = await import('../src/online.js');
+  assert.deepEqual(estimateTimes(['Fry spoonfuls 3-4 minutes each side.'], 4), { prepMin: 13, cookMin: 15 });
+  assert.deepEqual(estimateTimes(['Mix and serve.'], 2), { prepMin: 9, cookMin: 10 });
+  assert.equal(estimateTimes(['Roast for 1 hour.'], 3).cookMin, 60);
+});
+
+test('planned meals get days and cooking blocks that export as iCalendar', async () => {
+  const { scheduleWeek, cookingBlocks, toICS, scheduleJSON } = await import('../src/schedule.js');
+  const s = defaultState();
+  const chili = s.recipes.find((r) => r.id === 'r-chili');
+  const omelette = s.recipes.find((r) => r.id === 'r-omelette');
+  s.plan = [{ id: 'p1', recipeId: 'r-chili', servings: 6 }, { id: 'p2', recipeId: 'r-omelette', servings: 2 }, { id: 'p3', recipeId: 'r-chili', servings: 6, date: '2026-10-14', meal: 'dinner' }];
+  scheduleWeek(s, { from: '2026-10-14' });
+  assert.deepEqual([s.plan[0].date, s.plan[0].meal], ['2026-10-15', 'dinner'], 'the taken slot is skipped');
+  assert.deepEqual([s.plan[1].date, s.plan[1].meal], ['2026-10-14', 'breakfast']);
+  const blocks = cookingBlocks(s);
+  const omeletteBlock = blocks.find((b) => b.id === 'p2');
+  assert.equal(omeletteBlock.ready, '08:00');
+  assert.equal(omeletteBlock.minutes, omelette.prepMin + omelette.cookMin);
+  const chiliBlock = blocks.find((b) => b.id === 'p3');
+  const startMin = 18 * 60 + 30 - (chili.prepMin + chili.cookMin);
+  assert.equal(chiliBlock.start, `${String(Math.floor(startMin / 60)).padStart(2, '0')}:${String(startMin % 60).padStart(2, '0')}`);
+
+  const ics = toICS(blocks, { now: new Date('2026-10-14T12:00:00Z') });
+  assert.ok(ics.startsWith('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:'));
+  assert.ok(ics.includes('DTSTAMP:20261014T120000Z'));
+  assert.ok(ics.includes('DTEND:20261014T183000'));
+  assert.ok(ics.includes('SUMMARY:Cook: Beef and bean chili'));
+  assert.equal(ics.split('BEGIN:VEVENT').length - 1, 3);
+  for (const line of ics.split('\r\n')) assert.ok(new TextEncoder().encode(line).length <= 75, `line too long: ${line}`);
+  assert.ok(!/[^\\][,;](?=[^:]*$)/.test(ics.split('\r\n').find((l) => l.startsWith('SUMMARY')) ?? ''));
+  assert.equal(scheduleJSON(blocks)[0].title.startsWith('Cook: '), true);
+
+  // A meal ready at 08:00 that takes longer than 8 hours starts the day before.
+  s.recipes.push({ id: 'slow', name: 'Overnight', servings: 1, tags: ['breakfast'], ingredients: [], prepMin: 10, cookMin: 600, steps: ['a step', 'another step'] });
+  s.plan = [{ id: 'p9', recipeId: 'slow', servings: 1, date: '2026-10-16', meal: 'breakfast' }];
+  const [overnight] = cookingBlocks(s);
+  assert.deepEqual([overnight.startDate, overnight.start], ['2026-10-15', '21:50']);
 });

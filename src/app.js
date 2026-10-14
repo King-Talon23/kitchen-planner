@@ -4,9 +4,10 @@
 import { load, save, exportState, importState, defaultState } from './store.js';
 import { UNITS, formatQty } from './units.js';
 import { money, esc, unitOptions, recipeTime, recipeSteps } from './ui.js';
-import { addToInventory, logMeal, lowStock, expiringSoon, newId, today, canonicalName } from './inventory.js';
+import { addToInventory, logMeal, lowStock, expiringSoon, newId, today, addDays, canonicalName } from './inventory.js';
 import { suggestMeals } from './suggest.js';
 import { mealIdeas } from './ideas.js';
+import { MEALS, DEFAULT_MEAL_TIMES, scheduleWeek, cookingBlocks, toICS, scheduleJSON, totalMinutes } from './schedule.js';
 import { searchByIngredient, fetchRecipe, MEALDB_CREDIT } from './online.js';
 import { buildShoppingList, effectiveCatalog, autoPlan } from './shopping.js';
 import { DEFAULT_PRICES, PRICE_SOURCE } from './data/prices.js';
@@ -220,8 +221,14 @@ function renderInventory() {
 
 // ---------- Plan & shop ----------
 
+function dayLabel(date) {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 function renderPlan() {
   const list = buildShoppingList(state, catalog());
+  const blocks = cookingBlocks(state);
+  const days = Array.from({ length: 7 }, (_, n) => addDays(today(), n));
   const servings = state.plan.reduce((s, p) => s + Number(p.servings), 0);
   const target = state.settings.people * state.settings.mealsPerWeek;
   const pct = Math.min(100, (list.total / list.budget) * 100);
@@ -246,12 +253,26 @@ function renderPlan() {
         </div>
       </div>
       <p class="muted">${servings} of ${target} servings planned (${state.settings.people} ${state.settings.people == 1 ? 'person' : 'people'} × ${state.settings.mealsPerWeek} meals). Auto-plan picks the meals that add the least to your bill given what you already have.</p>
-      ${state.plan.length ? `<ul class="list">${state.plan.map((p) => {
+      ${state.plan.length ? `<ul class="list plan">${state.plan.map((p) => {
         const r = state.recipes.find((x) => x.id === p.recipeId);
-        return `<li class="row space"><span>${esc(r?.name ?? 'Deleted recipe')} · ${p.servings} servings</span>
-          <span class="row"><button class="small" data-action="plan-cook" data-id="${p.id}">Made it</button>
-          <button class="ghost small" data-action="plan-remove" data-id="${p.id}" aria-label="Remove from plan">✕</button></span></li>`;
-      }).join('')}</ul>` : '<p class="muted">No meals planned yet.</p>'}
+        const block = blocks.find((b) => b.id === p.id);
+        return `<li>
+          <div class="row space"><strong>${esc(r?.name ?? 'Deleted recipe')}</strong>
+            <span class="row"><button class="small" data-action="plan-cook" data-id="${p.id}">Made it</button>
+            <button class="ghost small" data-action="plan-remove" data-id="${p.id}" aria-label="Remove from plan">✕</button></span></div>
+          <div class="row wrap small">
+            <select data-change="plan-date" data-id="${p.id}" aria-label="Day">${['', ...days].map((d) => `<option value="${d}"${d === (p.date || '') ? ' selected' : ''}>${d ? dayLabel(d) : 'No day'}</option>`).join('')}</select>
+            <select data-change="plan-meal" data-id="${p.id}" aria-label="Meal">${MEALS.map((m) => `<option${m === (p.meal || 'dinner') ? ' selected' : ''}>${m}</option>`).join('')}</select>
+            <span class="muted">${p.servings} servings · ${r && totalMinutes(r) ? `${recipeTime(r)}` : 'no time set'}${block ? ` · start ${block.startDate !== block.date ? `${dayLabel(block.startDate)} ` : ''}${block.start}, ready ${block.ready}` : ''}</span>
+          </div></li>`;
+      }).join('')}</ul>
+      <div class="row wrap">
+        <button class="ghost" data-action="schedule-week">Fill in days</button>
+        <button class="ghost" data-action="schedule-ics"${blocks.length ? '' : ' disabled'}>Add to calendar (.ics)</button>
+        <button class="ghost" data-action="schedule-copy"${blocks.length ? '' : ' disabled'}>Copy schedule</button>
+        <button class="ghost" data-action="schedule-json"${blocks.length ? '' : ' disabled'}>Export JSON</button>
+      </div>
+      <p class="muted small">Cooking starts at the meal time minus the recipe's prep and cook time. Change meal times in Settings.</p>` : '<p class="muted">No meals planned yet.</p>'}
       <form data-form="plan" class="row wrap">
         <select name="recipeId">${state.recipes.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select>
         <label>Servings <input name="servings" type="number" min="1" step="1" value="4"></label>
@@ -314,8 +335,8 @@ function renderRecipes() {
           <label>Tags <input name="tags" value="${esc(editing?.tags?.join(', '))}" placeholder="dinner, vegetarian"></label>
         </div>
         <div class="row wrap">
-          <label>Prep minutes <input name="prepMin" type="number" min="0" step="1" value="${editing?.prepMin ?? ''}" class="num"></label>
-          <label>Cook minutes <input name="cookMin" type="number" min="0" step="1" value="${editing?.cookMin ?? ''}" class="num"></label>
+          <label>Prep minutes <input name="prepMin" type="number" min="0" step="1" required value="${editing?.prepMin ?? 10}" class="num"></label>
+          <label>Cook minutes <input name="cookMin" type="number" min="0" step="1" required value="${editing?.cookMin ?? 20}" class="num"></label>
         </div>
         <div id="ings">${(editing?.ingredients ?? [undefined, undefined, undefined]).map(ingRow).join('')}</div>
         <p class="muted small">Optional ingredients (spices, garnish) never block a suggestion or go on the shopping list.</p>
@@ -331,12 +352,13 @@ function renderRecipes() {
     </section>
     <section>
       <h2>Your recipes (${state.recipes.length})</h2>
-      <ul class="cards">${state.recipes.map((r) => `
-        <li class="card">
+      <input type="search" data-filter="recipes" placeholder="Search by name, ingredient or tag (e.g. chicken, breakfast, quick)" aria-label="Search recipes">
+      <ul class="cards" id="recipe-list">${state.recipes.map((r) => `
+        <li class="card" data-search="${esc([r.name, ...(r.tags || []), ...r.ingredients.map((i) => i.name)].join(' ').toLowerCase())}">
           <div class="row space"><strong>${esc(r.name)}</strong><span class="muted small">serves ${r.servings}${recipeTime(r) ? ` · ${recipeTime(r)}` : ''}</span></div>
           <p class="muted small">${r.ingredients.map((i) => `${esc(i.name)} ${i.qty} ${esc(UNITS[i.unit]?.label ?? i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
           ${recipeSteps(r, 'Steps')}
-          ${r.source ? `<p class="muted small">From <a href="${esc(r.source.url)}" target="_blank" rel="noopener">${esc(r.source.name)}</a>${r.source.estimatedTime ? '; time estimated from the steps' : ''}</p>` : ''}
+          ${r.source ? `<p class="muted small">From <a href="${esc(r.source.url)}" target="_blank" rel="noopener">${esc(r.source.name)}</a>${r.source.estimatedTime ? '; time is an estimate, edit to correct it' : ''}</p>` : ''}
           <div class="row">
             <button class="ghost small" data-action="recipe-edit" data-id="${r.id}">Edit</button>
             <button class="ghost small" data-action="recipe-delete" data-id="${r.id}">Delete</button>
@@ -367,7 +389,7 @@ function renderOnline() {
       ${p ? `
         <div class="callout">
           <div class="row space"><strong>${esc(p.name)}</strong><button class="ghost small" data-action="online-close">Close</button></div>
-          <p class="muted small">${p.cookMin ? `⏱ about ${recipeTime(p)}, estimated from the steps` : 'No cooking time given; add one after saving'} · serves about ${p.servings} (not stated, so edit after saving)</p>
+          <p class="muted small">⏱ about ${recipeTime(p)} (TheMealDB gives no times, so this is estimated from the steps) · serves about ${p.servings} (not stated, so edit after saving)</p>
           <p class="small">${p.ingredients.map((i) => `${esc(i.name)} ${i.qty} ${esc(UNITS[i.unit]?.label ?? i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
           ${recipeSteps(p, 'Steps')}
           <div class="row wrap">
@@ -473,6 +495,7 @@ function renderSettings() {
         <label>People <input name="people" type="number" min="1" step="1" value="${s.people}"></label>
         <label>Meals to plan per person per week <input name="mealsPerWeek" type="number" min="1" step="1" value="${s.mealsPerWeek}"></label>
         <label>Warn about expiry this many days ahead <input name="expiryWarningDays" type="number" min="0" step="1" value="${s.expiryWarningDays}"></label>
+        ${MEALS.map((m) => `<label>${m[0].toUpperCase() + m.slice(1)} time <input name="time-${m}" type="time" value="${esc((s.mealTimes || {})[m] ?? DEFAULT_MEAL_TIMES[m])}"></label>`).join('')}
         <button>Save settings</button>
       </form>
     </section>
@@ -566,8 +589,8 @@ function listAsText() {
   return [`Shopping list (${money(list.total)} of ${money(list.budget)})`, ...list.items.map((i) => `- ${i.name}: ${i.buy} (${money(i.cost)})`)].join('\n');
 }
 
-function download(name, text) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+function download(name, text, type = 'application/json') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   document.body.append(a);
   a.click();
@@ -623,6 +646,7 @@ document.addEventListener('click', async (event) => {
     case 'cook': return cook(recipe, recipe.servings, today());
     case 'plan-add':
       state.plan.push({ id: newId('plan'), recipeId: id, servings: recipe.servings });
+      scheduleWeek(state);
       return commit(`Added ${recipe.name} to this week's plan.`);
     case 'plan-remove':
       state.plan = state.plan.filter((p) => p.id !== id);
@@ -640,6 +664,7 @@ document.addEventListener('click', async (event) => {
     case 'autoplan': {
       const { plan, reason } = autoPlan(state, catalog());
       state.plan = plan;
+      scheduleWeek(state);
       return commit(reason);
     }
     case 'bought': return boughtEverything();
@@ -698,6 +723,21 @@ document.addEventListener('click', async (event) => {
       download(`kitchen-planner-${today()}.json`, exportState(state));
       state.lastBackup = new Date().toISOString();
       return commit('Backup downloaded.');
+    case 'schedule-week':
+      scheduleWeek(state);
+      return commit('Gave each planned meal a day.');
+    case 'schedule-ics':
+      return download(`meals-${today()}.ics`, toICS(cookingBlocks(state)), 'text/calendar');
+    case 'schedule-json':
+      return download(`meals-${today()}.json`, JSON.stringify(scheduleJSON(cookingBlocks(state)), null, 2));
+    case 'schedule-copy':
+      try {
+        await navigator.clipboard.writeText(cookingBlocks(state).map((b) => `${dayLabel(b.date)} ${b.meal}: ${b.recipe.name}. Start ${b.start}, ready ${b.ready} (${b.minutes} min)`).join('\n'));
+        toast('Schedule copied.');
+      } catch {
+        toast('Copy is not available here.');
+      }
+      return;
     case 'receipt-cancel':
       receipt = {};
       return render();
@@ -738,6 +778,7 @@ document.addEventListener('submit', (event) => {
       }
       case 'plan':
         state.plan.push({ id: newId('plan'), recipeId: data.recipeId, servings: Number(data.servings) });
+        scheduleWeek(state);
         return commit();
       case 'extra':
         if (!UNITS[data.unit]) throw new Error('Pick a unit');
@@ -794,6 +835,7 @@ document.addEventListener('submit', (event) => {
         return;
       case 'settings':
         for (const key of ['budget', 'people', 'mealsPerWeek', 'expiryWarningDays']) state.settings[key] = Number(data[key]);
+        state.settings.mealTimes = Object.fromEntries(MEALS.map((m) => [m, data[`time-${m}`] || DEFAULT_MEAL_TIMES[m]]));
         return commit('Settings saved.');
       default:
     }
@@ -816,7 +858,7 @@ function saveRecipe(form, data) {
     ...(previous?.source ? { source: { ...previous.source, estimatedTime: false, estimatedServings: false } } : {}),
     id: editingRecipeId ?? newId('r'), name: data.name.trim(), servings: Number(data.servings),
     tags: String(data.tags || '').split(',').map((t) => t.trim()).filter(Boolean), ingredients,
-    prepMin: data.prepMin === '' ? null : Number(data.prepMin), cookMin: data.cookMin === '' ? null : Number(data.cookMin),
+    prepMin: Number(data.prepMin) || 0, cookMin: Number(data.cookMin) || 0,
     steps: String(data.steps || '').split('\n').map((t) => t.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean),
   };
   const idx = state.recipes.findIndex((r) => r.id === recipe.id);
@@ -856,6 +898,14 @@ document.addEventListener('change', async (event) => {
     else if (field === 'qty') row.qty = el.value === '' ? '' : Number(el.value);
     else row[field] = el.value;
     return render();
+  }
+  if (change === 'plan-date' || change === 'plan-meal') {
+    const planned = state.plan.find((p) => p.id === id);
+    if (!planned) return;
+    if (change === 'plan-date') planned.date = el.value;
+    else planned.meal = el.value;
+    if (!planned.meal) planned.meal = 'dinner';
+    return commit();
   }
   if (change === 'price') {
     if (el.dataset.custom) {
@@ -924,6 +974,15 @@ async function readReceipt(file) {
   }
   render();
 }
+
+// Filter the recipe list as you type, without re-rendering (keeps focus).
+document.addEventListener('input', (event) => {
+  if (event.target.dataset?.filter !== 'recipes') return;
+  const words = event.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+  document.querySelectorAll('#recipe-list > li').forEach((li) => {
+    li.hidden = !words.every((w) => li.dataset.search.includes(w));
+  });
+});
 
 // Ask the browser not to clear our data under storage pressure.
 navigator.storage?.persist?.().catch(() => {});
