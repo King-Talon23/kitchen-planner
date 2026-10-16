@@ -2,21 +2,39 @@
 // up forms and buttons through event delegation.
 
 import { load, save, exportState, importState, defaultState } from './store.js';
-import { UNIT_KEYS, UNITS, formatQty } from './units.js';
-import { addToInventory, logMeal, lowStock, expiringSoon, newId, today, canonicalName } from './inventory.js';
+import { UNITS, formatQty } from './units.js';
+import { money, esc, unitOptions, recipeTime, recipeSteps } from './ui.js';
+import { addToInventory, logMeal, lowStock, expiringSoon, newId, today, addDays, canonicalName } from './inventory.js';
 import { suggestMeals } from './suggest.js';
+import { mealIdeas } from './ideas.js';
+import { MEALS, DEFAULT_MEAL_TIMES, scheduleWeek, cookingBlocks, toICS, scheduleJSON, totalMinutes } from './schedule.js';
+import { searchByIngredient, fetchRecipe, MEALDB_CREDIT } from './online.js';
 import { buildShoppingList, effectiveCatalog, autoPlan } from './shopping.js';
 import { DEFAULT_PRICES, PRICE_SOURCE } from './data/prices.js';
+import { addSpend } from './spending.js';
+import { lookupBarcode, rememberBarcode, startScanner } from './barcode.js';
+import { parseReceipt, buildReview, applyReceipt, amountFor, recognizeReceipt, prepareImage } from './receipt.js';
+import { loadSyncConfig, saveSyncConfig, syncNow, resolveConflict } from './sync.js';
+import { CM_PER_IN, LB_PER_KG, recipeNutrition } from './nutrition.js';
+import { logEaten, recipeServing, foodServing, logWeight } from './foodlog.js';
+import { renderNutrition, renderSpending, renderStorePrices, renderScanner, renderSync } from './views-more.js';
 
 let state = load();
 let tab = sessionGet('tab') || 'today';
 let editingRecipeId = null;
+let scan = { open: false };
+let receipt = {};
+let ideas = [];
+let logDate = today();
+let online = { query: '', results: [] };
+let scanner = null;
+let syncConfig = loadSyncConfig();
+let syncStatus = '';
+let syncTimer = null;
+let syncing = false;
 const app = document.getElementById('app');
 
 const LOCATIONS = ['pantry', 'fridge', 'freezer'];
-const money = (n) => (n == null ? '—' : n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }));
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const unitOptions = (selected = 'ea') => UNIT_KEYS.map((u) => `<option value="${u}" ${u === selected ? 'selected' : ''}>${UNITS[u].label}</option>`).join('');
 const catalog = () => effectiveCatalog(state);
 
 function sessionGet(key) {
@@ -26,7 +44,8 @@ function sessionSet(key, value) {
   try { sessionStorage.setItem(`kp-${key}`, value); } catch { /* private mode */ }
 }
 
-function commit(message) {
+function commit(message, { touch = true } = {}) {
+  if (touch) state.updatedAt = new Date().toISOString();
   try {
     save(state);
   } catch (err) {
@@ -35,6 +54,43 @@ function commit(message) {
   }
   render();
   if (message) toast(message);
+  if (touch) scheduleSync();
+}
+
+// ---------- Sync ----------
+
+function scheduleSync(delay = 4000) {
+  if (!syncConfig.token) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => runSync(), delay);
+}
+
+async function runSync({ manual = false } = {}) {
+  if (!syncConfig.token || syncing || !navigator.onLine) return;
+  syncing = true;
+  try {
+    let result = await syncNow(state, syncConfig);
+    if (result.action === 'conflict') {
+      const keepHere = confirm('This device and your other device both have changes since the last sync.\n\nOK: keep THIS device\'s data (the other copy is replaced).\nCancel: use the OTHER device\'s data (this copy is replaced).\n\nExport a backup first if you are unsure.');
+      result = await resolveConflict(keepHere ? 'local' : 'remote', state, result.remote, result.config);
+    }
+    syncConfig = result.config;
+    saveSyncConfig(syncConfig);
+    syncStatus = '';
+    if (result.action === 'pulled') {
+      state = result.state;
+      commit('Updated with changes from your other device.', { touch: false });
+    } else {
+      if (manual) toast({ created: 'Sync turned on.', pushed: 'Synced.', unchanged: 'Already up to date.' }[result.action]);
+      if (tab === 'settings') render();
+    }
+  } catch (err) {
+    syncStatus = `sync failed: ${err.message}`;
+    if (manual || tab === 'settings') toast(`Sync failed: ${err.message}`);
+    if (tab === 'settings') render();
+  } finally {
+    syncing = false;
+  }
 }
 
 let toastTimer;
@@ -44,6 +100,12 @@ function toast(message) {
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// "620 kcal · 38 g protein per serving", from USDA values.
+function servingLine(recipe, cat) {
+  const n = recipeNutrition(recipe, cat).perServing;
+  return n.kcal ? `${n.kcal} kcal · ${n.protein} g protein per serving` : '';
 }
 
 // ---------- Today ----------
@@ -62,11 +124,27 @@ function renderToday() {
         <strong>${esc(s.recipe.name)}</strong>
         <span class="pill">${Math.round(s.coverage * 100)}% on hand</span>
       </div>
+      ${recipeTime(s.recipe) ? `<p class="muted small">⏱ ${recipeTime(s.recipe)} · serves ${s.recipe.servings}${servingLine(s.recipe, cat) ? ` · ${servingLine(s.recipe, cat)}` : ''}</p>` : ''}
       ${s.usesExpiring.length ? `<p class="warn">Uses ${esc(s.usesExpiring.join(', '))} before ${s.usesExpiring.length > 1 ? 'they expire' : 'it expires'}</p>` : ''}
       ${s.missing.length ? `<p class="muted">Missing: ${s.missing.map((m) => `${esc(m.name)} (${formatQty(m.qty, m.unit)})`).join(', ')}</p>` : ''}
+      ${recipeSteps(s.recipe)}
       <div class="row">
         <button data-action="cook" data-id="${s.recipe.id}">I made this</button>
         <button class="ghost" data-action="plan-add" data-id="${s.recipe.id}">Add to plan</button>
+      </div>
+    </li>`;
+
+  ideas = mealIdeas(state, cat, { servings: Math.max(2, Number(state.settings.people) || 1) });
+  const ideaCard = (idea) => `
+    <li class="card">
+      <div class="row space"><strong>${esc(idea.name)}</strong><span class="pill">idea</span></div>
+      <p class="muted small">⏱ ${recipeTime(idea)} · serves ${idea.servings}${servingLine(idea, cat) ? ` · ${servingLine(idea, cat)}` : ''}</p>
+      ${idea.usesExpiring.length ? `<p class="warn">Uses ${esc(idea.usesExpiring.join(', '))} before ${idea.usesExpiring.length > 1 ? 'they expire' : 'it expires'}</p>` : ''}
+      <p class="muted small">${idea.ingredients.map((i) => `${esc(i.name)} ${formatQty(i.qty, i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
+      ${recipeSteps(idea)}
+      <div class="row">
+        <button data-action="idea-cook" data-id="${esc(idea.id)}">I made this</button>
+        <button class="ghost" data-action="idea-save" data-id="${esc(idea.id)}">Save to my recipes</button>
       </div>
     </li>`;
 
@@ -87,6 +165,12 @@ function renderToday() {
       ${ready.length ? `<ul class="cards">${ready.map(card).join('')}</ul>` : '<p class="muted">Nothing fully covered yet. See the close matches below.</p>'}
     </section>
     ${close.length ? `<section><h2>Almost there</h2><ul class="cards">${close.map(card).join('')}</ul></section>` : ''}
+    ${ideas.length ? `
+      <section>
+        <h2>Ideas from what you have</h2>
+        <p class="muted small">Put together from your inventory, so they change as you add food. Everything listed is on hand.</p>
+        <ul class="cards">${ideas.map(ideaCard).join('')}</ul>
+      </section>` : ''}
     <section>
       <h2>Log something else you ate</h2>
       <form data-form="log" class="row wrap">
@@ -112,6 +196,7 @@ function renderInventory() {
   return `
     <section>
       <h2>Add to inventory</h2>
+      ${renderScanner(scan)}
       <form data-form="inventory" class="grid">
         <label>Item <input name="name" list="food-names" required autocomplete="off" placeholder="e.g. milk"></label>
         <label>Amount <input name="qty" type="number" min="0" step="any" required></label>
@@ -144,8 +229,14 @@ function renderInventory() {
 
 // ---------- Plan & shop ----------
 
+function dayLabel(date) {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 function renderPlan() {
   const list = buildShoppingList(state, catalog());
+  const blocks = cookingBlocks(state);
+  const days = Array.from({ length: 7 }, (_, n) => addDays(today(), n));
   const servings = state.plan.reduce((s, p) => s + Number(p.servings), 0);
   const target = state.settings.people * state.settings.mealsPerWeek;
   const pct = Math.min(100, (list.total / list.budget) * 100);
@@ -153,7 +244,7 @@ function renderPlan() {
   const row = (i) => `
     <li class="shop-item">
       <label class="row"><input type="checkbox" data-action="noop">
-        <span><strong>${esc(i.name)}</strong> · buy ${esc(i.buy)}
+        <span><strong>${esc(i.name)}</strong> · buy ${esc(i.buy)}${i.store ? ` <span class="pill">${esc(i.store)}${i.until ? ` until ${esc(i.until.slice(5))}` : ''}</span>` : ''}
           <span class="muted small">(need ${esc(i.need)}; ${esc(reasonLabel[i.reason])}${i.sources.length && i.reason === 'plan' ? `: ${esc(i.sources.join(', '))}` : ''})</span>
         </span>
       </label>
@@ -170,12 +261,26 @@ function renderPlan() {
         </div>
       </div>
       <p class="muted">${servings} of ${target} servings planned (${state.settings.people} ${state.settings.people == 1 ? 'person' : 'people'} × ${state.settings.mealsPerWeek} meals). Auto-plan picks the meals that add the least to your bill given what you already have.</p>
-      ${state.plan.length ? `<ul class="list">${state.plan.map((p) => {
+      ${state.plan.length ? `<ul class="list plan">${state.plan.map((p) => {
         const r = state.recipes.find((x) => x.id === p.recipeId);
-        return `<li class="row space"><span>${esc(r?.name ?? 'Deleted recipe')} · ${p.servings} servings</span>
-          <span class="row"><button class="small" data-action="plan-cook" data-id="${p.id}">Made it</button>
-          <button class="ghost small" data-action="plan-remove" data-id="${p.id}" aria-label="Remove from plan">✕</button></span></li>`;
-      }).join('')}</ul>` : '<p class="muted">No meals planned yet.</p>'}
+        const block = blocks.find((b) => b.id === p.id);
+        return `<li>
+          <div class="row space"><strong>${esc(r?.name ?? 'Deleted recipe')}</strong>
+            <span class="row"><button class="small" data-action="plan-cook" data-id="${p.id}">Made it</button>
+            <button class="ghost small" data-action="plan-remove" data-id="${p.id}" aria-label="Remove from plan">✕</button></span></div>
+          <div class="row wrap small">
+            <select data-change="plan-date" data-id="${p.id}" aria-label="Day">${['', ...days].map((d) => `<option value="${d}"${d === (p.date || '') ? ' selected' : ''}>${d ? dayLabel(d) : 'No day'}</option>`).join('')}</select>
+            <select data-change="plan-meal" data-id="${p.id}" aria-label="Meal">${MEALS.map((m) => `<option${m === (p.meal || 'dinner') ? ' selected' : ''}>${m}</option>`).join('')}</select>
+            <span class="muted">${p.servings} servings · ${r && totalMinutes(r) ? `${recipeTime(r)}` : 'no time set'}${block ? ` · start ${block.startDate !== block.date ? `${dayLabel(block.startDate)} ` : ''}${block.start}, ready ${block.ready}` : ''}</span>
+          </div></li>`;
+      }).join('')}</ul>
+      <div class="row wrap">
+        <button class="ghost" data-action="schedule-week">Fill in days</button>
+        <button class="ghost" data-action="schedule-ics"${blocks.length ? '' : ' disabled'}>Add to calendar (.ics)</button>
+        <button class="ghost" data-action="schedule-copy"${blocks.length ? '' : ' disabled'}>Copy schedule</button>
+        <button class="ghost" data-action="schedule-json"${blocks.length ? '' : ' disabled'}>Export JSON</button>
+      </div>
+      <p class="muted small">Cooking starts at the meal time minus the recipe's prep and cook time. Change meal times in Settings.</p>` : '<p class="muted">No meals planned yet.</p>'}
       <form data-form="plan" class="row wrap">
         <select name="recipeId">${state.recipes.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select>
         <label>Servings <input name="servings" type="number" min="1" step="1" value="4"></label>
@@ -187,6 +292,7 @@ function renderPlan() {
       <h2>Shopping list</h2>
       <div class="budget">
         <div class="row space"><span>${money(list.total)} of ${money(list.budget)}</span><span>${money(list.remaining)} left</span></div>
+        ${list.spent ? `<p class="muted small">${money(list.weekly)} weekly budget minus ${money(list.spent)} already spent this week.</p>` : ''}
         <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${list.budget}" aria-valuenow="${list.total}"><div style="width:${pct}%"></div></div>
       </div>
       ${list.items.length ? `<ul class="shop">${list.items.map(row).join('')}</ul>` : '<p class="muted">Nothing to buy. Plan some meals or set restock levels in Inventory.</p>'}
@@ -218,6 +324,7 @@ function renderPlan() {
 // ---------- Recipes ----------
 
 function renderRecipes() {
+  const cat = catalog();
   const editing = state.recipes.find((r) => r.id === editingRecipeId);
   const ingRow = (ing = { name: '', qty: '', unit: 'g', optional: false }) => `
     <div class="row ing">
@@ -227,6 +334,7 @@ function renderRecipes() {
       <label class="small"><input type="checkbox" name="ing-optional" ${ing.optional ? 'checked' : ''}> optional</label>
     </div>`;
   return `
+    ${renderOnline()}
     <section>
       <h2>${editing ? `Edit ${esc(editing.name)}` : 'New recipe'}</h2>
       <form data-form="recipe" class="stack">
@@ -235,8 +343,13 @@ function renderRecipes() {
           <label>Serves <input name="servings" type="number" min="1" step="1" required value="${editing?.servings ?? 4}" class="num"></label>
           <label>Tags <input name="tags" value="${esc(editing?.tags?.join(', '))}" placeholder="dinner, vegetarian"></label>
         </div>
+        <div class="row wrap">
+          <label>Prep minutes <input name="prepMin" type="number" min="0" step="1" required value="${editing?.prepMin ?? 10}" class="num"></label>
+          <label>Cook minutes <input name="cookMin" type="number" min="0" step="1" required value="${editing?.cookMin ?? 20}" class="num"></label>
+        </div>
         <div id="ings">${(editing?.ingredients ?? [undefined, undefined, undefined]).map(ingRow).join('')}</div>
         <p class="muted small">Optional ingredients (spices, garnish) never block a suggestion or go on the shopping list.</p>
+        <label>Steps, one per line <textarea name="steps" rows="6" placeholder="Heat the oven to 200°C (400°F).">${esc(editing?.steps?.join('\n') ?? '')}</textarea></label>
         <div class="row">
           <button type="button" class="ghost" data-action="ing-add">Add ingredient</button>
           <button>${editing ? 'Save recipe' : 'Add recipe'}</button>
@@ -248,16 +361,57 @@ function renderRecipes() {
     </section>
     <section>
       <h2>Your recipes (${state.recipes.length})</h2>
-      <ul class="cards">${state.recipes.map((r) => `
-        <li class="card">
-          <div class="row space"><strong>${esc(r.name)}</strong><span class="muted small">serves ${r.servings}</span></div>
+      <input type="search" data-filter="recipes" placeholder="Search by name, ingredient or tag (e.g. chicken, breakfast, quick)" aria-label="Search recipes">
+      <ul class="cards" id="recipe-list">${state.recipes.map((r) => `
+        <li class="card" data-search="${esc([r.name, ...(r.tags || []), ...r.ingredients.map((i) => i.name)].join(' ').toLowerCase())}">
+          <div class="row space"><strong>${esc(r.name)}</strong><span class="muted small">serves ${r.servings}${recipeTime(r) ? ` · ${recipeTime(r)}` : ''}${servingLine(r, cat) ? ` · ${servingLine(r, cat)}` : ''}</span></div>
           <p class="muted small">${r.ingredients.map((i) => `${esc(i.name)} ${i.qty} ${esc(UNITS[i.unit]?.label ?? i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
+          ${recipeSteps(r, 'Steps')}
+          ${r.source ? `<p class="muted small">From <a href="${esc(r.source.url)}" target="_blank" rel="noopener">${esc(r.source.name)}</a>${r.source.estimatedTime ? '; time is an estimate, edit to correct it' : ''}</p>` : ''}
           <div class="row">
             <button class="ghost small" data-action="recipe-edit" data-id="${r.id}">Edit</button>
             <button class="ghost small" data-action="recipe-delete" data-id="${r.id}">Delete</button>
           </div>
         </li>`).join('')}
       </ul>
+    </section>`;
+}
+
+function renderOnline() {
+  const cat = catalog();
+  const onHand = [...new Set(state.inventory.filter((i) => i.qty > 0).map((i) => i.name.trim().toLowerCase()))];
+  const unused = onHand.filter((n) => !state.recipes.some((r) => r.ingredients.some((i) => canonicalName(i.name, cat) === canonicalName(n, cat))));
+  const p = online.preview;
+  return `
+    <section>
+      <h2>Find recipes online</h2>
+      <p class="muted small">Search <a href="${MEALDB_CREDIT.url}" target="_blank" rel="noopener">TheMealDB</a>, a free recipe database, by ingredient. Saved recipes work offline and show up in suggestions.</p>
+      <form data-form="online-search" class="row wrap">
+        <input name="q" list="onhand-names" value="${esc(online.query)}" placeholder="Ingredient, e.g. zucchini" required>
+        <button>Search</button>
+      </form>
+      <datalist id="onhand-names">${onHand.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+      ${unused.length ? `<p class="small muted">In your kitchen but in none of your recipes:</p>
+        <div class="chips">${unused.slice(0, 12).map((n) => `<button class="chip" data-action="online-find" data-q="${esc(n)}">${esc(n)}</button>`).join('')}</div>` : ''}
+      ${online.busy ? `<p class="muted">${esc(online.busy)}</p>` : ''}
+      ${online.error ? `<p class="warn">${esc(online.error)}</p>` : ''}
+      ${p ? `
+        <div class="callout">
+          <div class="row space"><strong>${esc(p.name)}</strong><button class="ghost small" data-action="online-close">Close</button></div>
+          <p class="muted small">⏱ about ${recipeTime(p)} (TheMealDB gives no times, so this is estimated from the steps) · serves about ${p.servings} (not stated, so edit after saving)</p>
+          <p class="small">${p.ingredients.map((i) => `${esc(i.name)} ${i.qty} ${esc(UNITS[i.unit]?.label ?? i.unit)}${i.optional ? ' (optional)' : ''}`).join(' · ')}</p>
+          ${recipeSteps(p, 'Steps')}
+          <div class="row wrap">
+            <button data-action="online-save">Save to my recipes</button>
+            <a class="small" href="${esc(p.source.url)}" target="_blank" rel="noopener">View on TheMealDB</a>
+          </div>
+        </div>` : ''}
+      ${online.results.length ? `
+        <ul class="results">${online.results.slice(0, 12).map((r) => `
+          <li><button class="result" data-action="online-view" data-id="${esc(r.id)}">
+            <img src="${esc(r.thumb)}/small" alt="" loading="lazy" width="56" height="56"><span>${esc(r.name)}</span></button></li>`).join('')}
+        </ul>
+        <p class="muted small">${online.results.length} ${online.results.length === 1 ? 'recipe' : 'recipes'}. Recipe data and images: <a href="${MEALDB_CREDIT.url}" target="_blank" rel="noopener">TheMealDB</a>.</p>` : ''}
     </section>`;
 }
 
@@ -292,7 +446,50 @@ function renderPrices() {
         <input name="price" type="number" min="0" step="0.01" placeholder="Price" required class="num">
         <button class="ghost">Add</button>
       </form>
-    </section>`;
+    </section>
+    ${renderStorePrices(state)}`;
+}
+
+// ---------- Barcode scanning ----------
+
+function closeScanner() {
+  scanner?.stop();
+  scanner = null;
+  scan = { open: false };
+}
+
+async function startCamera() {
+  scan = { ...scan, scanning: true, message: '', error: false, product: null };
+  render();
+  const video = document.getElementById('scan-video');
+  try {
+    scanner = startScanner(video);
+    const code = await scanner.result;
+    scanner = null;
+    if (code) await findProduct(code);
+  } catch (err) {
+    scanner = null;
+    const messages = {
+      NotAllowedError: 'Camera permission was denied. Type the barcode number instead.',
+      NotFoundError: 'No camera found. Type the barcode number instead.',
+    };
+    scan = { ...scan, scanning: false, error: true, message: messages[err?.name] ?? err.message };
+    render();
+  }
+}
+
+async function findProduct(code) {
+  scan = { ...scan, scanning: false, code, message: 'Looking up…', error: false, product: null };
+  render();
+  try {
+    const product = await lookupBarcode(code, state, catalog());
+    scan = product
+      ? { ...scan, product, message: product.key ? '' : 'No matching price item; edit the name if you like.' }
+      : { ...scan, error: true, message: 'Not found in Open Food Facts. Add it by hand below the scanner.' };
+  } catch (err) {
+    scan = { ...scan, error: true, message: err.message };
+  }
+  render();
 }
 
 // ---------- Settings ----------
@@ -307,6 +504,7 @@ function renderSettings() {
         <label>People <input name="people" type="number" min="1" step="1" value="${s.people}"></label>
         <label>Meals to plan per person per week <input name="mealsPerWeek" type="number" min="1" step="1" value="${s.mealsPerWeek}"></label>
         <label>Warn about expiry this many days ahead <input name="expiryWarningDays" type="number" min="0" step="1" value="${s.expiryWarningDays}"></label>
+        ${MEALS.map((m) => `<label>${m[0].toUpperCase() + m.slice(1)} time <input name="time-${m}" type="time" value="${esc((s.mealTimes || {})[m] ?? DEFAULT_MEAL_TIMES[m])}"></label>`).join('')}
         <button>Save settings</button>
       </form>
     </section>
@@ -319,10 +517,14 @@ function renderSettings() {
         <label class="button ghost">Import backup <input type="file" accept="application/json,.json" data-change="import" hidden></label>
         <button class="ghost danger" data-action="reset">Erase everything</button>
       </div>
-    </section>`;
+    </section>
+    ${renderSync(syncConfig, syncStatus)}`;
 }
 
-const VIEWS = { today: renderToday, inventory: renderInventory, plan: renderPlan, recipes: renderRecipes, prices: renderPrices, settings: renderSettings };
+const VIEWS = {
+  today: renderToday, inventory: renderInventory, plan: renderPlan, recipes: renderRecipes, prices: renderPrices,
+  nutrition: () => renderNutrition(state, catalog(), { date: logDate > today() ? today() : logDate }), spending: () => renderSpending(state, receipt, catalog()), settings: renderSettings,
+};
 
 function render() {
   if (!VIEWS[tab]) tab = 'today';
@@ -357,11 +559,16 @@ function addDaysISO(days) {
 }
 
 function cook(recipe, servings, date) {
-  const { shortfalls } = logMeal(state, recipe, { servings, date }, catalog());
+  const cat = catalog();
+  const { entry, shortfalls } = logMeal(state, recipe, { servings, date }, cat);
+  // You ate one serving; the rest show as leftovers on the Nutrition tab.
+  const { per, unknown } = recipeServing(recipe, cat);
+  entry.per = per;
+  logEaten(state, { date, name: recipe.name, servings: 1, per, unknown, recipeId: recipe.id, mealId: entry.id, kind: 'recipe' });
   const note = shortfalls.length
     ? ` You didn't have enough ${shortfalls.map((s) => s.name).join(', ')}, so check those amounts in Inventory.`
     : '';
-  commit(`Logged ${recipe.name}. Inventory updated.${note}`);
+  commit(`Logged ${recipe.name}: inventory updated, and 1 serving (${per.kcal} kcal, ${per.protein} g protein) added to what you ate.${note}`);
 }
 
 const CATEGORY_LOCATION = { frozen: 'freezer', meat: 'fridge', dairy: 'fridge', fridge: 'fridge' };
@@ -382,7 +589,13 @@ function boughtEverything() {
   }
   const boughtManual = new Set(list.items.filter((i) => i.reason === 'manual').map((i) => canonicalName(i.name, cat)));
   state.extras = state.extras.filter((e) => !boughtManual.has(canonicalName(e.name, cat)));
-  commit(`Added ${list.items.length} items to inventory.`);
+  const paid = prompt('What did you pay in total? (Leave blank to skip the spending log.)', list.total.toFixed(2));
+  let note = '';
+  if (paid != null && paid.trim() !== '' && Number.isFinite(Number(paid))) {
+    addSpend(state, { amount: Number(paid), store: [...new Set(list.items.map((i) => i.store).filter(Boolean))].join(', '), note: `${list.items.length} items` });
+    note = ` Logged ${money(Number(paid))} in Spending.`;
+  }
+  commit(`Added ${list.items.length} items to inventory.${note}`);
 }
 
 function listAsText() {
@@ -390,8 +603,8 @@ function listAsText() {
   return [`Shopping list (${money(list.total)} of ${money(list.budget)})`, ...list.items.map((i) => `- ${i.name}: ${i.buy} (${money(i.cost)})`)].join('\n');
 }
 
-function download(name, text) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+function download(name, text, type = 'application/json') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   document.body.append(a);
   a.click();
@@ -405,6 +618,7 @@ document.addEventListener('click', async (event) => {
     tab = tabButton.dataset.tab;
     sessionSet('tab', tab);
     editingRecipeId = null;
+    closeScanner();
     render();
     app.focus();
     return;
@@ -416,9 +630,37 @@ document.addEventListener('click', async (event) => {
 
   switch (action) {
     case 'sample': return loadSample();
+    case 'idea-cook': {
+      const idea = ideas.find((i) => i.id === id);
+      return idea && cook(idea, idea.servings, today());
+    }
+    case 'idea-save': {
+      const idea = ideas.find((i) => i.id === id);
+      if (!idea) return;
+      const { usesExpiring, ...recipe } = idea;
+      state.recipes.push({ ...structuredClone(recipe), id: newId('r') });
+      return commit(`Saved ${idea.name} to your recipes.`);
+    }
+    case 'online-find':
+      tab = 'recipes';
+      sessionSet('tab', tab);
+      return searchOnline(el.dataset.q);
+    case 'online-view': return viewOnline(id);
+    case 'online-close':
+      online.preview = null;
+      return render();
+    case 'online-save': {
+      const recipe = online.preview;
+      if (!recipe) return;
+      if (state.recipes.some((r) => r.source?.id && r.source.id === recipe.source.id)) return toast(`${recipe.name} is already in your recipes.`);
+      state.recipes.push(structuredClone(recipe));
+      online.preview = null;
+      return commit(`Saved ${recipe.name}. Edit it to fix servings, times or amounts.`);
+    }
     case 'cook': return cook(recipe, recipe.servings, today());
     case 'plan-add':
       state.plan.push({ id: newId('plan'), recipeId: id, servings: recipe.servings });
+      scheduleWeek(state);
       return commit(`Added ${recipe.name} to this week's plan.`);
     case 'plan-remove':
       state.plan = state.plan.filter((p) => p.id !== id);
@@ -433,12 +675,46 @@ document.addEventListener('click', async (event) => {
       if (r) return cook(r, planned.servings, today());
       return commit();
     }
+    case 'eat-delete':
+      state.eaten = state.eaten.filter((e) => e.id !== id);
+      return commit();
+    case 'eat-leftover': {
+      const meal = state.history.find((m) => m.id === id);
+      if (!meal?.per) return;
+      logEaten(state, { date: logDate, name: meal.recipeName, servings: 1, per: meal.per, recipeId: meal.recipeId, mealId: meal.id, kind: 'recipe' });
+      return commit(`Logged a serving of ${meal.recipeName}.`);
+    }
+    case 'weight-delete':
+      state.weights = state.weights.filter((w) => w.id !== id);
+      return commit();
     case 'autoplan': {
       const { plan, reason } = autoPlan(state, catalog());
       state.plan = plan;
+      scheduleWeek(state);
       return commit(reason);
     }
     case 'bought': return boughtEverything();
+    case 'scan-open':
+      scan = { open: true };
+      render();
+      if ('BarcodeDetector' in window || navigator.mediaDevices?.getUserMedia) startCamera();
+      return;
+    case 'scan-close':
+      closeScanner();
+      return render();
+    case 'scan-start': return startCamera();
+    case 'spend-delete':
+      state.spending = state.spending.filter((s) => s.id !== id);
+      return commit();
+    case 'store-price-delete':
+      state.storePrices = state.storePrices.filter((p) => p.id !== id);
+      return commit();
+    case 'sync-now': return runSync({ manual: true });
+    case 'sync-off':
+      if (!confirm('Turn off sync on this device? Your data stays here and in the gist.')) return;
+      syncConfig = { token: '', gistId: '', lastSynced: null, lastSyncAt: null };
+      saveSyncConfig(syncConfig);
+      return render();
     case 'copy-list':
       try {
         await navigator.clipboard.writeText(listAsText());
@@ -473,6 +749,30 @@ document.addEventListener('click', async (event) => {
       download(`kitchen-planner-${today()}.json`, exportState(state));
       state.lastBackup = new Date().toISOString();
       return commit('Backup downloaded.');
+    case 'schedule-week':
+      scheduleWeek(state);
+      return commit('Gave each planned meal a day.');
+    case 'schedule-ics':
+      return download(`meals-${today()}.ics`, toICS(cookingBlocks(state)), 'text/calendar');
+    case 'schedule-json':
+      return download(`meals-${today()}.json`, JSON.stringify(scheduleJSON(cookingBlocks(state)), null, 2));
+    case 'schedule-copy':
+      try {
+        await navigator.clipboard.writeText(cookingBlocks(state).map((b) => `${dayLabel(b.date)} ${b.meal}: ${b.recipe.name}. Start ${b.start}, ready ${b.ready} (${b.minutes} min)`).join('\n'));
+        toast('Schedule copied.');
+      } catch {
+        toast('Copy is not available here.');
+      }
+      return;
+    case 'receipt-cancel':
+      receipt = {};
+      return render();
+    case 'receipt-save': {
+      const { prices, added } = applyReceipt(state, receipt.review, catalog(), { addToInventory, addSpend, newId });
+      const total = Number(receipt.review.total) || 0;
+      receipt = {};
+      return commit(`Saved: ${money(total)} spent, ${added} ${added === 1 ? 'item' : 'items'} stocked, ${prices} store ${prices === 1 ? 'price' : 'prices'} updated.`);
+    }
     case 'reset':
       if (!confirm('Erase all inventory, recipes, plans and history? Export a backup first if you might want it.')) return;
       state = defaultState();
@@ -488,17 +788,23 @@ document.addEventListener('submit', (event) => {
   const data = Object.fromEntries(new FormData(form));
   try {
     switch (form.dataset.form) {
-      case 'inventory':
-        addToInventory(state, data, catalog());
-        commit(`Added ${data.name}.`);
+      case 'inventory': {
+        const cat = catalog();
+        addToInventory(state, data, cat);
+        const key = canonicalName(data.name, cat);
+        const used = state.recipes.some((r) => r.ingredients.some((i) => canonicalName(i.name, cat) === key));
+        commit(used ? `Added ${data.name}.` : `Added ${data.name}. None of your recipes use it yet: Today shows ideas with it, and Recipes can search online.`);
         document.querySelector('[data-form="inventory"] [name="name"]')?.focus();
         return;
+      }
+      case 'online-search': return searchOnline(data.q);
       case 'log': {
         const recipe = state.recipes.find((r) => r.id === data.recipeId);
         return cook(recipe, Number(data.servings), data.date);
       }
       case 'plan':
         state.plan.push({ id: newId('plan'), recipeId: data.recipeId, servings: Number(data.servings) });
+        scheduleWeek(state);
         return commit();
       case 'extra':
         if (!UNITS[data.unit]) throw new Error('Pick a unit');
@@ -512,8 +818,74 @@ document.addEventListener('submit', (event) => {
           pack: { qty: Number(data.qty), unit: data.unit }, aliases: [], perWeight: false, category: 'other', custom: true,
         });
         return commit(`Price added for ${data.key}.`);
+      case 'spend':
+        addSpend(state, data);
+        return commit(`Recorded ${money(Number(data.amount))}.`);
+      case 'store-price': {
+        const price = Number(data.price);
+        const qty = Number(data.qty);
+        if (!(price >= 0) || !(qty > 0)) throw new Error('Enter a price and an amount');
+        if (!UNITS[data.unit]) throw new Error('Pick a unit');
+        state.storePrices.push({
+          id: newId('sp'), key: data.key.trim().toLowerCase(), store: data.store.trim(), price, qty, unit: data.unit,
+          perWeight: Boolean(data.perWeight), until: data.until || '', seen: today(),
+        });
+        return commit(`Saved the ${data.store.trim()} price for ${data.key.trim()}.`);
+      }
+      case 'eat-recipe': {
+        const r = state.recipes.find((x) => x.id === data.recipeId);
+        if (!r) throw new Error('Pick a recipe');
+        const { per, unknown } = recipeServing(r, catalog());
+        logEaten(state, { date: data.date || today(), name: r.name, servings: data.servings, per, unknown, recipeId: r.id, kind: 'recipe' });
+        return commit(`Logged ${r.name}.`);
+      }
+      case 'eat-food': {
+        const qty = Number(data.qty);
+        if (!(qty > 0)) throw new Error('Enter an amount');
+        const per = foodServing(data.name.trim(), qty, data.unit, catalog());
+        if (!per) throw new Error(`No nutrition data for "${data.name.trim()}" in that unit. Try grams, or add it from its label.`);
+        logEaten(state, { date: data.date || today(), name: `${data.name.trim()} ${formatQty(qty, data.unit)}`, servings: 1, per, kind: 'food' });
+        return commit(`Logged ${data.name.trim()}.`);
+      }
+      case 'eat-label': {
+        const per = { kcal: Number(data.kcal), protein: Number(data.protein || 0), fat: Number(data.fat || 0), carbs: Number(data.carbs || 0) };
+        logEaten(state, { date: data.date || today(), name: data.name.trim(), servings: 1, per, kind: 'label' });
+        return commit(`Logged ${data.name.trim()}.`);
+      }
+      case 'weight': {
+        const w = logWeight(state, { date: data.date || today(), kg: Number(data.lb) / LB_PER_KG });
+        return commit(`Saved ${data.lb} lb for ${w.date}.`);
+      }
+      case 'profile': {
+        const inches = Number(data.ft || 0) * 12 + Number(data.in || 0);
+        Object.assign(state.profile, {
+          sex: data.sex, age: data.age === '' ? '' : Number(data.age), activity: data.activity, goal: data.goal,
+          heightCm: inches ? Math.round(inches * CM_PER_IN * 10) / 10 : '',
+          weightKg: data.lb === '' ? '' : Math.round((Number(data.lb) / LB_PER_KG) * 1000) / 1000,
+          goalWeightKg: data.goalLb === '' ? '' : Math.round((Number(data.goalLb) / LB_PER_KG) * 1000) / 1000,
+        });
+        return commit('Details saved.');
+      }
+      case 'scan-code':
+        if (!data.code.trim()) return;
+        scanner?.stop();
+        findProduct(data.code.trim());
+        return;
+      case 'scan-add': {
+        const item = addToInventory(state, data, catalog());
+        if (scan.product) rememberBarcode(state, { ...scan.product, name: item.name, key: scan.product.key, qty: Number(data.qty), unit: data.unit });
+        closeScanner();
+        return commit(`Added ${item.name}.`);
+      }
+      case 'sync':
+        syncConfig = { ...syncConfig, token: data.token.trim() };
+        saveSyncConfig(syncConfig);
+        render();
+        runSync({ manual: true });
+        return;
       case 'settings':
         for (const key of ['budget', 'people', 'mealsPerWeek', 'expiryWarningDays']) state.settings[key] = Number(data[key]);
+        state.settings.mealTimes = Object.fromEntries(MEALS.map((m) => [m, data[`time-${m}`] || DEFAULT_MEAL_TIMES[m]]));
         return commit('Settings saved.');
       default:
     }
@@ -531,9 +903,13 @@ function saveRecipe(form, data) {
     name: n.value.trim(), qty: Number(qtys[idx].value), unit: units[idx].value, optional: opts[idx].checked,
   })).filter((i) => i.name && i.qty > 0);
   if (!ingredients.length) throw new Error('Add at least one ingredient with an amount');
+  const previous = state.recipes.find((r) => r.id === editingRecipeId);
   const recipe = {
+    ...(previous?.source ? { source: { ...previous.source, estimatedTime: false, estimatedServings: false } } : {}),
     id: editingRecipeId ?? newId('r'), name: data.name.trim(), servings: Number(data.servings),
     tags: String(data.tags || '').split(',').map((t) => t.trim()).filter(Boolean), ingredients,
+    prepMin: Number(data.prepMin) || 0, cookMin: Number(data.cookMin) || 0,
+    steps: String(data.steps || '').split('\n').map((t) => t.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean),
   };
   const idx = state.recipes.findIndex((r) => r.id === recipe.id);
   if (idx >= 0) state.recipes[idx] = recipe;
@@ -557,6 +933,39 @@ document.addEventListener('change', async (event) => {
     }
     return;
   }
+  if (change === 'receipt-photo') return readReceipt(el.files?.[0]);
+  if (change === 'receipt-meta') {
+    receipt.review[el.dataset.field] = el.dataset.field === 'total' ? (el.value === '' ? '' : Number(el.value)) : el.value;
+    return;
+  }
+  if (change === 'receipt-row') {
+    const row = receipt.review.rows.find((r) => r.idx === Number(el.dataset.idx));
+    const field = el.dataset.field;
+    if (field === 'key') {
+      row.key = el.value || null;
+      Object.assign(row, amountFor(row, catalog().find((e) => e.key === row.key)));
+    } else if (field === 'addToInventory') row.addToInventory = el.checked;
+    else if (field === 'qty') row.qty = el.value === '' ? '' : Number(el.value);
+    else row[field] = el.value;
+    return render();
+  }
+  if (change === 'log-date') {
+    logDate = el.value || today();
+    return render();
+  }
+  if (change === 'eaten-servings') {
+    const entry = state.eaten.find((e) => e.id === id);
+    if (entry && Number(el.value) > 0) entry.servings = Number(el.value);
+    return commit();
+  }
+  if (change === 'plan-date' || change === 'plan-meal') {
+    const planned = state.plan.find((p) => p.id === id);
+    if (!planned) return;
+    if (change === 'plan-date') planned.date = el.value;
+    else planned.meal = el.value;
+    if (!planned.meal) planned.meal = 'dinner';
+    return commit();
+  }
   if (change === 'price') {
     if (el.dataset.custom) {
       const entry = state.customPrices.find((p) => p.key === key);
@@ -576,8 +985,72 @@ document.addEventListener('change', async (event) => {
   commit();
 });
 
+// Recipes from TheMealDB for an ingredient.
+async function searchOnline(query) {
+  const q = String(query || '').trim();
+  if (!q) return;
+  online = { query: q, busy: `Searching for recipes with ${q}…`, results: [] };
+  render();
+  try {
+    const results = await searchByIngredient(q);
+    online = { query: q, results, error: results.length ? '' : `TheMealDB has no recipes listed under "${q}". Try a simpler name, like "chicken" or "zucchini".` };
+  } catch (err) {
+    online = { query: q, results: [], error: navigator.onLine === false ? 'You are offline. Online recipe search needs a connection.' : `Search failed: ${err.message}` };
+  }
+  render();
+}
+
+async function viewOnline(id) {
+  online.busy = 'Loading the recipe…';
+  render();
+  try {
+    online.preview = await fetchRecipe(id);
+    online.error = '';
+  } catch (err) {
+    online.error = `Could not load the recipe: ${err.message}`;
+  }
+  online.busy = '';
+  render();
+}
+
+// Read a receipt photo on the device, then show the matches for checking.
+async function readReceipt(file) {
+  if (!file) return;
+  receipt = { busy: 'Loading the text reader (first time only)…', progress: 0 };
+  render();
+  try {
+    const image = await prepareImage(file);
+    const text = await recognizeReceipt(image, (progress) => {
+      receipt = { busy: 'Reading the receipt…', progress };
+      render();
+    });
+    const parsed = parseReceipt(text);
+    if (!parsed.items.length) throw new Error('No priced lines found. Try a flatter, closer photo in good light.');
+    receipt = { review: buildReview(parsed, catalog(), state.receiptAliases) };
+  } catch (err) {
+    console.error(err);
+    receipt = { error: err.message?.startsWith('No priced') ? err.message : `Could not read the receipt: ${err.message || err}` };
+  }
+  render();
+}
+
+// Filter the recipe list as you type, without re-rendering (keeps focus).
+document.addEventListener('input', (event) => {
+  if (event.target.dataset?.filter !== 'recipes') return;
+  const words = event.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+  document.querySelectorAll('#recipe-list > li').forEach((li) => {
+    li.hidden = !words.every((w) => li.dataset.search.includes(w));
+  });
+});
+
 // Ask the browser not to clear our data under storage pressure.
 navigator.storage?.persist?.().catch(() => {});
+
+// Pick up changes from the other device when the app opens or comes back.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') scheduleSync(0);
+});
+scheduleSync(0);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Offline mode unavailable', err));

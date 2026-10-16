@@ -9,7 +9,46 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
 - **Inventory** by pantry, fridge and freezer, with best-before dates and an
   optional "keep at least" level for staples (milk, eggs, bread).
 - **Meal suggestions** ranked by how much of each recipe you already have,
-  with recipes that use food about to expire pushed to the top.
+  with recipes that use food about to expire pushed to the top. There are 204
+  starter recipes (breakfasts, lunches, snacks, chicken, beef, pork, fish,
+  vegetarian, soups and batch meals), searchable in the Recipes tab. Each one
+  shows its prep and cook time and opens to step-by-step instructions. The
+  times are estimates for one home cook. Meat,
+  fish and egg steps give Health Canada's
+  [safe internal cooking temperatures](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/safe-internal-cooking-temperatures.html)
+  (71°C for ground beef and pork, 74°C for chicken and egg dishes, 70°C for
+  fish), so check with a thermometer rather than trusting the clock.
+  Storage notes follow Health Canada's
+  [leftovers advice](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/food-safety-tips-leftovers.html):
+  eat refrigerated leftovers within 2 to 3 days and reheat them to 74°C.
+- **Cooking schedule.** Each planned meal gets a day and a meal slot (breakfast,
+  lunch, dinner or snack), and the plan shows when to start cooking: the meal
+  time minus prep and cook time. Meal times are set in Settings. "Add to
+  calendar" downloads an iCalendar file
+  ([RFC 5545](https://www.rfc-editor.org/rfc/rfc5545)) with one "Cook: ..."
+  event per meal, including its ingredients and steps. Google Calendar, Apple
+  Calendar, Outlook and most schedule apps can import it. "Export JSON" gives
+  the same schedule as plain data, for apps that take that instead.
+- **Ideas from what you have.** The Today tab also builds meals straight from
+  your inventory: stir-fries, sheet-pan roasts, pasta, omelettes, soups, rice
+  bowls and wraps. Ideas change as you add food. They prefer food that is about
+  to expire, then food none of your recipes use yet, so new groceries show up
+  right away, even ones the price list doesn't know (zucchini, eggplant,
+  ground turkey...). You can cook an idea or save it as a recipe.
+- **Find recipes online** (Recipes tab). This searches
+  [TheMealDB](https://www.themealdb.com/), a free recipe database, by
+  ingredient. It also suggests a one-tap search for each food in your kitchen
+  that no recipe uses. A recipe you save keeps its ingredients and steps and
+  works offline.
+  - TheMealDB doesn't give servings or times, so servings default to 4. The
+    cook time is the larger of the minutes the steps mention and a floor for
+    the cooking method (35 for oven, 30 for simmering, 15 for frying), and
+    prep grows with the number of ingredients. Both are marked as estimates
+    for you to correct.
+  - Its [terms](https://www.themealdb.com/terms_of_use.php) allow copying
+    what the API returns, with credit, which the app shows. The free key is
+    meant for development and personal use; publishing to an app store needs
+    a paid key.
 - **Log a meal** ("I made this") and its ingredients come out of the
   inventory, scaled to the servings you made, oldest stock first.
 - **Weekly plan and shopping list.** Auto-plan picks the meals that add the
@@ -19,6 +58,34 @@ builds a weekly shopping list that stays within a budget ($150 CAD by default).
   choose what to drop. "I bought these" moves the purchases into inventory.
 - **Prices** default to Statistics Canada national averages and can be
   changed to match your store.
+- **Store and flyer prices.** Enter a price from a flyer, shelf tag or receipt
+  with its store and sale end date. The shopping list uses the cheapest
+  current price and shows which store it's at.
+- **Spending log.** "I bought these" asks what you actually paid, or you can
+  record a shop by hand. The Spending tab shows each week against the budget,
+  and money already spent this week comes off the shopping list's budget.
+- **Barcode scanning.** Scan a product with the phone camera (or type the
+  number) to look it up in Open Food Facts and add it to inventory. Barcodes
+  you've added before are remembered and work offline.
+- **Nutrition targets.** From your height, weight, age, sex, activity and goal,
+  the app estimates daily calories and protein, shows how much of that the
+  week's planned meals cover, lists calories and protein per serving for each
+  recipe, and ranks foods by calories and protein per dollar.
+- **Food log.** "I made this" logs one serving of the meal as eaten, and the
+  spare servings show as leftovers to tap when you eat them. You can also add
+  any recipe, a food by amount (e.g. 500 ml milk), or a packaged food from its
+  Nutrition Facts label. Each day shows calories, protein, fat and carbs
+  against your targets, with a 7-day view.
+- **Plate check.** The week's plan measured against Canada's Food Guide
+  plate (half vegetables and fruits, a quarter protein foods, a quarter whole
+  grains), with the recipes lowest in vegetables named.
+- **Nutrition-aware auto-plan.** With your details filled in, auto-plan weighs
+  each meal's cost against how much of a meal's share (a third of the day) of
+  calories and protein it gives, so filling meals win over cheap small ones.
+  Snack recipes are no longer used as meals.
+- **Weight log.** Weigh-ins update the weight your targets use, and once they
+  span a week the app shows your trend per week against the target rate.
+- **Sync between devices** through a secret GitHub Gist (see below).
 - Works offline and can be installed to a phone's home screen.
 
 ## Running it
@@ -52,11 +119,87 @@ Nothing is sent anywhere. Two things to know:
 - So use **Settings → Export backup** now and then. The same file moves your
   data to another device with **Import backup**.
 
+## Syncing your phone and laptop
+
+Settings → Sync between devices. Make a GitHub fine-grained personal access
+token with only **Gists: read and write** and paste it on each device. The app
+saves your data to one secret gist and keeps every device up to date: when only
+one side changed it copies that side, and when both changed since the last sync
+it asks which copy to keep. ([GitHub Gists API](https://docs.github.com/en/rest/gists/gists))
+
+The token stays in that browser. It is never put in backups or in the gist.
+A secret gist is unlisted, not encrypted, so anyone who has its link can read it.
+
+## Nutrition targets, and where they come from
+
+- Resting energy: Mifflin-St Jeor equation, which a systematic review found
+  most likely to estimate within 10% of measured values
+  ([Frankenfield et al. 2005](https://doi.org/10.1016/j.jada.2005.02.005)).
+- Activity: midpoints of the FAO/WHO/UNU physical activity level bands
+  ([FAO 2001, table 5.3](https://www.fao.org/3/y5686e/y5686e07.htm)).
+- Gaining weight: a 10–20% surplus, 1.6–2.2 g protein and 0.5–1.5 g fat per
+  kg each day, gaining about 0.25–0.5% of body weight a week
+  ([Iraki et al. 2019](https://doi.org/10.3390/sports7070154); written for
+  people doing resistance training). Muscle gains from protein level off
+  around 1.6 g/kg ([Morton et al. 2018](https://doi.org/10.1136/bjsports-2017-097608)).
+- Food values: USDA FoodData Central, SR Legacy, per 100 g as purchased
+  (`src/data/nutrients.js` lists each food's FDC id).
+- Leftovers are offered for the day they're cooked and 2 days after, since
+  Health Canada says to eat refrigerated leftovers within 2 to 3 days
+  ([Health Canada](https://www.canada.ca/en/health-canada/services/general-food-safety-tips/food-safety-tips-leftovers.html)).
+- Weight trend: Iraki et al. suggest judging the rate of gain from average
+  weekly change across daily or several-a-week weigh-ins, so the app fits a
+  line through the last 4 weeks of weigh-ins. Gaining slower or faster than
+  0.25–0.5% a week, it suggests eating toward the top or bottom of your
+  10–20% surplus range.
+
+- Plate check: [Health Canada's healthy plate](https://www.canada.ca/en/health-canada/services/food-guide/eating-support/cooking/make-healthy-meals-plate.html),
+  with foods grouped by the [2019 Food Guide food classification](https://www.canada.ca/en/health-canada/services/publications/food-nutrition/2019-canada-food-guide-food-classification-system-foods-beverages-categories.html)
+  (potatoes count as vegetables; juice and milk are beverages; processed
+  meats, sauces, oils and sugar are outside the plate). It compares weights,
+  not plate space, with dry grains and legumes converted to cooked weight
+  using USDA cooked energy values, so it is a rough guide.
+
+These are planning estimates, not medical advice.
+
+## Barcodes
+
+Products are looked up in [Open Food Facts](https://openfoodfacts.github.io/openfoodfacts-server/api/),
+a free open database (product reads are limited to 15 a minute). Scanning uses
+the browser's [Barcode Detection API](https://developer.mozilla.org/en-US/docs/Web/API/Barcode_Detection_API)
+where it exists. Elsewhere (for example Safari), it uses the
+[barcode-detector](https://github.com/Sec-ant/barcode-detector) ponyfill, which
+is vendored in `vendor/`, so scanning works offline.
+
+## Store prices, flyers and receipts
+
+I couldn't find an official public API for Canadian grocery flyers (Flipp, for
+example, doesn't document one publicly), and Walmart Canada's terms of use
+forbid scraping its site, so the app doesn't read store websites. Store prices
+come from you instead, two ways:
+
+- **Scan a receipt** (Spending tab). Take a photo; the text is read on your
+  device with [Tesseract.js](https://github.com/naptha/tesseract.js)
+  (Apache-2.0, loaded from jsDelivr the first time and cached after). You check
+  the matched items, then one Save records what you paid, adds the food to your
+  inventory and stores each price as a store price. Receipts abbreviate names
+  ("GRND BF MED"), so the matcher expands common abbreviations and remembers
+  every match you confirm or skip. Weighed items use the "kg @ $/kg" line
+  when the receipt prints one; otherwise you type the weight.
+- **Type a flyer or shelf price** (Prices tab), optionally with the sale's end date.
+
+A store price is used until its sale ends, or for 45 days after you saw it,
+and the cheapest active price wins over the StatCan default.
+
 ## Where the prices come from
 
 Default prices are from Statistics Canada,
 [Table 18-10-0245-01, Monthly average retail prices for selected products](https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1810024501),
-Canada, August 2026 (released 7 October 2026). They are national averages
+Canada, August 2026 (released 7 October 2026). A GitHub Action
+(`.github/workflows/update-prices.yml`) checks StatCan every Monday,
+downloads the full table when a new month is out, writes
+`src/data/statcan-latest.js`, runs the tests and commits the change, so the
+defaults follow the monthly releases without anyone editing them. They are national averages
 from retailer scanner data, so your store's prices will differ; edit them in
 the Prices tab. Basic groceries are zero-rated for GST/HST, so the list adds
 no tax ([CRA](https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/gst-hst-businesses/charge-collect-type-supply.html)).
@@ -84,14 +227,15 @@ src/shopping.js           shopping list, budget, auto-plan
 src/store.js              save/load, backup import/export
 src/data/prices.js        StatCan default prices
 src/data/recipes.js       starter recipes
+src/data/nutrients.js     USDA nutrient values per food
+src/spending.js           spending log and weekly totals
+src/barcode.js            scanning and Open Food Facts lookup
+src/nutrition.js          calorie/protein targets, recipe nutrition
+src/foodlog.js            food log, leftovers, weight trend
+src/plate.js              Canada's Food Guide plate check
+src/sync.js               GitHub Gist sync
+src/views-more.js         screens for the above
+vendor/barcode-detector/  barcode scanner for browsers without one
 sw.js                     offline cache
 test/                     node:test tests for the logic
 ```
-
-## Ideas for later
-
-- Sync between phone and laptop (needs a small backend or a sync service).
-- Barcode scanning to add groceries faster.
-- Weekly flyer prices for your local stores instead of national averages.
-- Spending history: what you actually paid each week against the budget.
-- Nutrition targets for the plan (e.g. Canada's Food Guide plate proportions).

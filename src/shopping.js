@@ -9,17 +9,57 @@
 
 import { DEFAULT_PRICES } from './data/prices.js';
 import { toBase, convertBase, formatQty, normalizeName } from './units.js';
-import { recipeNeeds, consume, canonicalName, available } from './inventory.js';
+import { recipeNeeds, consume, canonicalName, available, today, addDays } from './inventory.js';
+import { spentInWeek } from './spending.js';
+import { dailyTargets, servingNutritionMap } from './nutrition.js';
 
 export const PRIORITY = { manual: 0, plan: 1, restock: 2 };
 
-// The default StatCan prices with the user's own prices layered on top.
-export function effectiveCatalog(state) {
+// Store prices you entered (from a flyer, shelf tag or receipt) count while
+// they are current: until their sale end date, or for STORE_PRICE_DAYS after
+// you saw them when there is no end date.
+export const STORE_PRICE_DAYS = 45;
+
+export function activeStorePrices(state, on = today()) {
+  const oldest = addDays(on, -STORE_PRICE_DAYS);
+  return (state.storePrices || []).filter((p) => (p.until ? p.until >= on : p.seen >= oldest));
+}
+
+function unitPrice(entry) {
+  const pack = toBase(entry.pack.qty, entry.pack.unit);
+  return { per: entry.price / pack.qty, unit: pack.unit };
+}
+
+// The default StatCan prices, then your own edits, then the cheapest current
+// store price for each item (a real price beats a national average).
+export function effectiveCatalog(state, on = today()) {
   const overrides = state.priceOverrides || {};
-  const base = DEFAULT_PRICES.map((entry) => (overrides[entry.key] != null
+  const catalog = DEFAULT_PRICES.map((entry) => (overrides[entry.key] != null
     ? { ...entry, price: Number(overrides[entry.key]), overridden: true }
     : entry));
-  return [...base, ...(state.customPrices || [])];
+  catalog.push(...(state.customPrices || []));
+
+  for (const sp of activeStorePrices(state, on)) {
+    const candidate = {
+      key: sp.key, statcan: `${sp.store || 'Store'} price`, price: Number(sp.price), pack: { qty: Number(sp.qty), unit: sp.unit },
+      perWeight: Boolean(sp.perWeight), aliases: [], category: 'other', store: sp.store, until: sp.until || '', fromStore: true,
+    };
+    const key = canonicalName(sp.key, catalog);
+    const idx = catalog.findIndex((e) => normalizeName(e.key) === key);
+    if (idx < 0) {
+      catalog.push(candidate);
+      continue;
+    }
+    const current = catalog[idx];
+    const mine = unitPrice(candidate);
+    const theirs = unitPrice(current);
+    const comparable = mine.unit === theirs.unit;
+    // Replace a default price with any store price; replace another store price only when cheaper.
+    if (!current.fromStore || (comparable && mine.per < theirs.per)) {
+      catalog[idx] = { ...candidate, key: current.key, aliases: current.aliases, category: current.category, defaultPrice: current.fromStore ? current.defaultPrice : current };
+    }
+  }
+  return catalog;
 }
 
 export function findPrice(name, catalog) {
@@ -92,8 +132,12 @@ export function weeklyNeeds(state, catalog) {
   return [...needs.values()];
 }
 
-export function buildShoppingList(state, catalog = effectiveCatalog(state)) {
-  const budget = Number(state.settings?.budget ?? 150);
+// The budget left for the week is the weekly budget minus what the spending
+// log says you've already spent this week.
+export function buildShoppingList(state, catalog = effectiveCatalog(state), { on = today() } = {}) {
+  const weekly = Number(state.settings?.budget ?? 150);
+  const spent = spentInWeek({ spending: state.spending || [] }, on);
+  const budget = Math.max(0, round2(weekly - spent));
   const needs = weeklyNeeds(state, catalog);
   const priced = needs.map((need) => {
     const price = priceFor(need.name, need.qty, need.unit, catalog);
@@ -106,6 +150,8 @@ export function buildShoppingList(state, catalog = effectiveCatalog(state)) {
       buyUnit: price?.buyUnit ?? need.unit,
       category: price?.entry.category ?? 'other',
       priceLabel: price?.entry.statcan ?? null,
+      store: price?.entry.store ?? null,
+      until: price?.entry.until ?? null,
     };
   });
   priced.sort((a, b) => a.priority - b.priority || (a.cost ?? 0) - (b.cost ?? 0) || a.name.localeCompare(b.name));
@@ -124,6 +170,8 @@ export function buildShoppingList(state, catalog = effectiveCatalog(state)) {
   }
   return {
     budget,
+    weekly,
+    spent,
     total: round2(total),
     remaining: round2(budget - total),
     items,
@@ -146,7 +194,7 @@ export function autoPlan(state, catalog = effectiveCatalog(state)) {
   const meals = Number(state.settings?.mealsPerWeek ?? 14);
   const target = people * meals;
   const plan = [...(state.plan || [])];
-  const candidates = state.recipes.filter((r) => !r.tags?.includes('breakfast'));
+  const candidates = state.recipes.filter((r) => !r.tags?.includes('breakfast') && !r.tags?.includes('snack'));
   const pool = candidates.length ? candidates : state.recipes;
   if (!pool.length) return { plan, reason: 'Add some recipes first.' };
 
@@ -156,7 +204,26 @@ export function autoPlan(state, catalog = effectiveCatalog(state)) {
     .filter((i) => i.priority <= PRIORITY.plan)
     .reduce((sum, i) => sum + (i.cost ?? 0), 0);
 
-  let reason = 'Planned enough servings for the week.';
+  // With nutrition targets set, a recipe's cost per serving is weighed against
+  // how much of a meal's share of the day's calories and protein it gives
+  // (a third of each, for three meals a day), so cheap but small meals don't
+  // win over filling ones.
+  const targets = dailyTargets(state.profile || {});
+  const nutrition = targets ? servingNutritionMap(pool, catalog) : null;
+  const fit = (recipe) => {
+    if (!nutrition) return 1;
+    const n = nutrition.get(recipe.id);
+    const kcal = Math.min(1, n.kcal / (targets.kcal / 3));
+    const protein = Math.min(1, n.protein / (targets.protein[0] / 3));
+    return Math.max(0.05, (kcal + protein) / 2);
+  };
+  // Lower is better. Meals made from what you already have (no added cost)
+  // come first, the most filling of them first.
+  const score = (cost, recipe) => (cost <= 0 ? -fit(recipe) : cost / fit(recipe));
+
+  let reason = targets
+    ? 'Planned enough servings for the week, favouring meals that give the most calories and protein for the money.'
+    : 'Planned enough servings for the week.';
   while (plannedServings(plan) < target) {
     const current = listFor(plan);
     const used = new Set(plan.map((p) => p.recipeId));
@@ -169,7 +236,8 @@ export function autoPlan(state, catalog = effectiveCatalog(state)) {
       // Skip a recipe if it would push anything new off the list.
       if (list.over.length > current.over.length) continue;
       const perServing = (planCost(list) - planCost(current)) / recipe.servings;
-      if (!best || perServing < best.perServing) best = { recipe, perServing };
+      const value = score(perServing, recipe);
+      if (!best || value < best.value) best = { recipe, value };
     }
     if (!best) {
       reason = 'Stopped early: another meal would push the list over budget.';

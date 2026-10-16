@@ -14,3 +14,15 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+
+  # Checks that the monthly price refresh can still download and read the
+  # StatCan table. It changes nothing in the repository.
+  statcan-download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/update-prices.js
+      - run: git diff --stat
