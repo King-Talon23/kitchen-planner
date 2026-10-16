@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const port = Number(process.env.PORT) || 8080;
 const types = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json',
+  '.png': 'image/png', '.wasm': 'application/wasm', '.json': 'application/json', '.webmanifest': 'application/manifest+json',
 };
 
 createServer(async (req, res) => {

@@ -1,8 +1,10 @@
 // Default grocery prices, in CAD.
 //
 // Source: Statistics Canada, Table 18-10-0245-01 "Monthly average retail
-// prices for selected products", geography Canada, reference month
-// August 2026 (released 2026-10-07).
+// prices for selected products", geography Canada. The numbers live in
+// statcan-latest.js, which a monthly GitHub Action refreshes from the
+// newest release (scripts/update-prices.js). The prices written below are
+// the August 2026 values, used only if an item goes missing from the table.
 // https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1810024501
 // https://doi.org/10.25318/1810024501-eng
 //
@@ -15,14 +17,20 @@
 //               bought (meat, loose produce); otherwise whole packs are bought
 //   statcan   - the exact product label in the StatCan table
 
+import { STATCAN_PRICES } from './statcan-latest.js';
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const [year, month] = STATCAN_PRICES.month.split('-').map(Number);
+
 export const PRICE_SOURCE = {
-  name: 'Statistics Canada, Table 18-10-0245-01 (Canada, August 2026)',
+  name: `Statistics Canada, Table 18-10-0245-01 (Canada, ${MONTHS[month - 1]} ${year})`,
   url: 'https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1810024501',
-  month: '2026-08',
+  month: STATCAN_PRICES.month,
+  updated: STATCAN_PRICES.updated,
 };
 
-const p = (key, statcan, price, qty, unit, opts = {}) => ({
-  key, statcan, price, pack: { qty, unit }, aliases: [], perWeight: false, category: 'other', ...opts,
+const p = (key, statcan, fallback, qty, unit, opts = {}) => ({
+  key, statcan, price: STATCAN_PRICES.prices[statcan] ?? fallback, pack: { qty, unit }, aliases: [], perWeight: false, category: 'other', ...opts,
 });
 
 export const DEFAULT_PRICES = [
