@@ -13,8 +13,10 @@ const types = {
 };
 
 createServer(async (req, res) => {
-  const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^(\.\.[/\\])+/, '');
-  const file = join(root, path.endsWith('/') ? `${path}index.html` : path);
+  // Add index.html before normalize, which turns '/' into '\' on Windows.
+  const pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  const path = normalize(pathname.endsWith('/') ? `${pathname}index.html` : pathname).replace(/^(\.\.[/\\])+/, '');
+  const file = join(root, path);
   if (!file.startsWith(root)) {
     res.writeHead(403).end();
     return;
